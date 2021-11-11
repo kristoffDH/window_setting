@@ -1,0 +1,46 @@
+
+* winget install 
+    > https://sunyzero.tistory.com/271
+
+* Chocolatey 
+    > https://chocolatey.org/install
+
+* Scoop
+    > Set-ExecutionPolicy RemoteSigned -scope CurrentUser
+    > iex (new-object net.webclient).downloadstring('https://get.scoop.sh')
+
+* lsd
+    > scoop install lsd
+
+* powershell config
+    code $PROFILE.CurrentUserCurrentHost
+
+* oh my posh
+    > winget install JanDeDobbeleer.OhMyPosh
+    
+    > theme view
+        Get-ChildItem -Path "~\AppData\Local\Programs\oh-my-posh\themes\*" -Include '*.omp.json' | Sort-Object Name | ForEach-Object -Process {
+            $esc = [char]27
+            Write-Host ""
+            Write-Host "$esc[1m$($_.BaseName)$esc[0m"
+            Write-Host ""
+            oh-my-posh --config $($_.FullName) --pwd $PWD
+            Write-Host ""
+        }
+
+    > upgrade
+        winget upgrade JanDeDobbeleer.OhMyPosh
+
+    > Export Current theme 
+        Export-PoshTheme -FilePath ~/.mytheme.omp.json -Format json
+
+    > apply theme
+        oh-my-posh --init --shell pwsh --config C:\Users\krist\AppData\Local\Programs\oh-my-posh\themes\slimfat.omp.json | Invoke-Expression
+
+* Power Toys 
+    > WinGet install powertoys
+
+* window therminal
+* window git
+* powershell sudo
+    > Install-Module -Name Sudo
