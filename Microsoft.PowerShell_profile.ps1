@@ -14,7 +14,3 @@ function memo {
 function ll {
     lsd -al
 }
-
-function cd-jcesoft {
-    cd C:\Users\krist\Desktop\JCESoft
-}
