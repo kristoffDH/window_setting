@@ -11,6 +11,7 @@
 
 * lsd
     > scoop install lsd
+    > choco install lsd
 
 * powershell config
     code $PROFILE.CurrentUserCurrentHost

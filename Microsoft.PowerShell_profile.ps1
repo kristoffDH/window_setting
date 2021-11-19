@@ -17,3 +17,7 @@ function memo {
 function ll {
     lsd -al
 }
+
+function lt {
+    lsd --tree
+}
