@@ -23,10 +23,6 @@ function lt {
     lsd --tree
 }
 
-function ssh-server {
-    ssh dhkristoff@192.168.1.207
-}
-
 function omp-theme {
 
     Get-ChildItem -Path "~\Desktop\window_setting\oh-my-posh theme\*"  -Include '*.omp.json' `
