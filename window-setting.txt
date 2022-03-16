@@ -69,3 +69,8 @@
         3. .vimrc파일에 linux_setting 리파지토리에 있는 init.vim에서 14라인(theme 부분)부터 끝가지 복사하여 붙여넣기.
 
         4. vi 실행 후 :PlugInstall 실행
+
+
+
+* zlocation 설치
+    > Install-Module ZLocation -Scope CurrentUser; Import-Module ZLocation; Add-Content -Value "`r`n`r`nImport-Module ZLocation`r`n" -Encoding utf8 -Path $PROFILE.CurrentUserCurrentHost
