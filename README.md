@@ -5,14 +5,6 @@
 2. oh-my-posh에서 사용하려는 테마의 내용을 .mytheme.omp.json에 덮어쓰기
 3. powershell 재실행
 
-## oh-my-posh theme
-- bubbles.omp.json
-- bubblesline.omp.json
-- craver.omp.json
-- night-owl.omp.json
-- patriksvensson.omp.json
-- slimfat.omp.json
-
 
 ## window terminal setting
 windw-term.setting.json 파일의 내용을 window terminal의 json 설정 파일에 내용을 덮어쓰기

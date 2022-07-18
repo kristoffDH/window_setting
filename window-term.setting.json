@@ -3,6 +3,49 @@
     "actions": [
         {
             "command": {
+                "action": "switchToTab",
+                "index": 7
+            },
+            "keys": "ctrl+8"
+        },
+        {
+            "command": "unbound",
+            "keys": "ctrl+alt+1"
+        },
+        {
+            "command": "unbound",
+            "keys": "ctrl+alt+2"
+        },
+        {
+            "command": "unbound",
+            "keys": "ctrl+alt+3"
+        },
+        {
+            "command": "unbound",
+            "keys": "ctrl+alt+4"
+        },
+        {
+            "command": "unbound",
+            "keys": "ctrl+alt+5"
+        },
+        {
+            "command": "unbound",
+            "keys": "ctrl+alt+6"
+        },
+        {
+            "command": "unbound",
+            "keys": "ctrl+alt+7"
+        },
+        {
+            "command": "unbound",
+            "keys": "ctrl+alt+8"
+        },
+        {
+            "command": "unbound",
+            "keys": "ctrl+shift+p"
+        },
+        {
+            "command": {
                 "action": "copy",
                 "singleLine": false
             },
@@ -15,6 +58,13 @@
                 "splitMode": "duplicate"
             },
             "keys": "ctrl+shift+o"
+        },
+        {
+            "command": {
+                "action": "switchToTab",
+                "index": 3
+            },
+            "keys": "ctrl+4"
         },
         {
             "command": {
@@ -41,8 +91,11 @@
             "keys": "alt+up"
         },
         {
-            "command": "find",
-            "keys": "ctrl+f"
+            "command": {
+                "action": "switchToTab",
+                "index": 0
+            },
+            "keys": "ctrl+1"
         },
         {
             "command": {
@@ -51,6 +104,10 @@
                 "splitMode": "duplicate"
             },
             "keys": "ctrl+shift+e"
+        },
+        {
+            "command": "find",
+            "keys": "ctrl+f"
         },
         {
             "command": {
@@ -111,19 +168,61 @@
             "keys": "ctrl+shift+right"
         },
         {
+            "command": {
+                "action": "switchToTab",
+                "index": 5
+            },
+            "keys": "ctrl+6"
+        },
+        {
             "command": "closePane",
             "keys": "ctrl+w"
+        },
+        {
+            "command": {
+                "action": "switchToTab",
+                "index": 6
+            },
+            "keys": "ctrl+7"
         },
         {
             "command": {
                 "action": "closeTab"
             },
             "keys": "ctrl+q"
+        },
+        {
+            "command": {
+                "action": "switchToTab",
+                "index": 4
+            },
+            "keys": "ctrl+5"
+        },
+        {
+            "command": {
+                "action": "switchToTab",
+                "index": 1
+            },
+            "keys": "ctrl+2"
+        },
+        {
+            "command": {
+                "action": "switchToTab",
+                "index": 2
+            },
+            "keys": "ctrl+3"
+        },
+        {
+            "command": {
+                "action": "commandPalette"
+            },
+            "keys": "f1"
         }
     ],
     "copyFormatting": "none",
     "copyOnSelect": false,
     "defaultProfile": "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}",
+    "experimental.detectURLs": false,
     "focusFollowMouse": false,
     "initialCols": 120,
     "initialRows": 40,
@@ -254,6 +353,52 @@
             "selectionBackground": "#1F1F1F",
             "white": "#D6DBE5",
             "yellow": "#ECBA0F"
+        },
+        {
+            "background": "#0C0C0C",
+            "black": "#0C0C0C",
+            "blue": "#0037DA",
+            "brightBlack": "#767676",
+            "brightBlue": "#3B78FF",
+            "brightCyan": "#61D6D6",
+            "brightGreen": "#16C60C",
+            "brightPurple": "#B4009E",
+            "brightRed": "#E74856",
+            "brightWhite": "#F2F2F2",
+            "brightYellow": "#F9F1A5",
+            "cursorColor": "#FFFFFF",
+            "cyan": "#3A96DD",
+            "foreground": "#CCCCCC",
+            "green": "#13A10E",
+            "name": "Campbell",
+            "purple": "#881798",
+            "red": "#C50F1F",
+            "selectionBackground": "#FFFFFF",
+            "white": "#CCCCCC",
+            "yellow": "#C19C00"
+        },
+        {
+            "background": "#012456",
+            "black": "#0C0C0C",
+            "blue": "#0037DA",
+            "brightBlack": "#767676",
+            "brightBlue": "#3B78FF",
+            "brightCyan": "#61D6D6",
+            "brightGreen": "#16C60C",
+            "brightPurple": "#B4009E",
+            "brightRed": "#E74856",
+            "brightWhite": "#F2F2F2",
+            "brightYellow": "#F9F1A5",
+            "cursorColor": "#FFFFFF",
+            "cyan": "#3A96DD",
+            "foreground": "#CCCCCC",
+            "green": "#13A10E",
+            "name": "Campbell Powershell",
+            "purple": "#881798",
+            "red": "#C50F1F",
+            "selectionBackground": "#FFFFFF",
+            "white": "#CCCCCC",
+            "yellow": "#C19C00"
         },
         {
             "background": "#181818",
@@ -877,5 +1022,7 @@
             "yellow": "#FFD60A"
         }
     ],
-    "theme": "light"
+    "theme": "light",
+    "trimBlockSelection": true,
+    "useAcrylicInTabRow": true
 }
