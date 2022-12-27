@@ -1,12 +1,65 @@
 {
+    "$help": "https://aka.ms/terminal-documentation",
     "$schema": "https://aka.ms/terminal-profiles-schema",
     "actions": [
+        {
+            "command": {
+                "action": "switchToTab",
+                "index": 3
+            },
+            "keys": "ctrl+4"
+        },
+        {
+            "command": {
+                "action": "resizePane",
+                "direction": "up"
+            },
+            "keys": "ctrl+shift+up"
+        },
+        {
+            "command": {
+                "action": "splitPane",
+                "split": "auto",
+                "splitMode": "duplicate"
+            },
+            "keys": "alt+shift+d"
+        },
+        {
+            "command": {
+                "action": "splitPane",
+                "split": "auto",
+                "splitMode": "duplicate"
+            },
+            "keys": "ctrl+shift+\\"
+        },
+        {
+            "command": {
+                "action": "splitPane",
+                "split": "down",
+                "splitMode": "duplicate"
+            },
+            "keys": "ctrl+shift+o"
+        },
+        {
+            "command": {
+                "action": "switchToTab",
+                "index": 0
+            },
+            "keys": "ctrl+1"
+        },
         {
             "command": {
                 "action": "switchToTab",
                 "index": 7
             },
             "keys": "ctrl+8"
+        },
+        {
+            "command": {
+                "action": "moveFocus",
+                "direction": "down"
+            },
+            "keys": "alt+down"
         },
         {
             "command": "unbound",
@@ -46,6 +99,24 @@
         },
         {
             "command": {
+                "action": "resizePane",
+                "direction": "right"
+            },
+            "keys": "ctrl+shift+right"
+        },
+        {
+            "command": {
+                "action": "switchToTab",
+                "index": 2
+            },
+            "keys": "ctrl+3"
+        },
+        {
+            "command": "paste",
+            "keys": "ctrl+v"
+        },
+        {
+            "command": {
                 "action": "copy",
                 "singleLine": false
             },
@@ -53,35 +124,9 @@
         },
         {
             "command": {
-                "action": "splitPane",
-                "split": "horizontal",
-                "splitMode": "duplicate"
-            },
-            "keys": "ctrl+shift+o"
-        },
-        {
-            "command": {
-                "action": "switchToTab",
-                "index": 3
-            },
-            "keys": "ctrl+4"
-        },
-        {
-            "command": {
-                "action": "resizePane",
-                "direction": "up"
-            },
-            "keys": "ctrl+shift+up"
-        },
-        {
-            "command": {
                 "action": "newTab"
             },
             "keys": "ctrl+t"
-        },
-        {
-            "command": "paste",
-            "keys": "ctrl+v"
         },
         {
             "command": {
@@ -92,15 +137,8 @@
         },
         {
             "command": {
-                "action": "switchToTab",
-                "index": 0
-            },
-            "keys": "ctrl+1"
-        },
-        {
-            "command": {
                 "action": "splitPane",
-                "split": "vertical",
+                "split": "right",
                 "splitMode": "duplicate"
             },
             "keys": "ctrl+shift+e"
@@ -111,40 +149,10 @@
         },
         {
             "command": {
-                "action": "splitPane",
-                "split": "auto",
-                "splitMode": "duplicate"
-            },
-            "keys": "alt+shift+d"
-        },
-        {
-            "command": {
-                "action": "splitPane",
-                "split": "auto",
-                "splitMode": "duplicate"
-            },
-            "keys": "ctrl+shift+\\"
-        },
-        {
-            "command": {
-                "action": "moveFocus",
-                "direction": "left"
-            },
-            "keys": "alt+left"
-        },
-        {
-            "command": {
                 "action": "moveFocus",
                 "direction": "right"
             },
             "keys": "alt+right"
-        },
-        {
-            "command": {
-                "action": "moveFocus",
-                "direction": "down"
-            },
-            "keys": "alt+down"
         },
         {
             "command": {
@@ -155,17 +163,24 @@
         },
         {
             "command": {
-                "action": "resizePane",
+                "action": "moveFocus",
                 "direction": "left"
             },
-            "keys": "ctrl+shift+left"
+            "keys": "alt+left"
+        },
+        {
+            "command": {
+                "action": "switchToTab",
+                "index": 1
+            },
+            "keys": "ctrl+2"
         },
         {
             "command": {
                 "action": "resizePane",
-                "direction": "right"
+                "direction": "left"
             },
-            "keys": "ctrl+shift+right"
+            "keys": "ctrl+shift+left"
         },
         {
             "command": {
@@ -200,20 +215,6 @@
         },
         {
             "command": {
-                "action": "switchToTab",
-                "index": 1
-            },
-            "keys": "ctrl+2"
-        },
-        {
-            "command": {
-                "action": "switchToTab",
-                "index": 2
-            },
-            "keys": "ctrl+3"
-        },
-        {
-            "command": {
                 "action": "commandPalette"
             },
             "keys": "f1"
@@ -237,7 +238,6 @@
         },
         "list": [
             {
-                "commandline": "powershell.exe",
                 "font": {
                     "size": 10,
                     "weight": "bold"
@@ -247,17 +247,27 @@
                 "name": "Windows PowerShell"
             },
             {
-                "commandline": "cmd.exe",
                 "guid": "{0caa0dad-35be-5f56-a8ff-afceeeaa6101}",
                 "hidden": false,
                 "name": "\uba85\ub839 \ud504\ub86c\ud504\ud2b8"
             },
             {
-                "guid": "{07b52e3e-de2c-5db4-bd2d-ba144ed6c273}",
+                "guid": "{6e36c142-0d44-5165-b66a-196189a30bf4}",
                 "hidden": false,
-                "name": "Ubuntu",
-                "source": "Windows.Terminal.Wsl",
-                "startingDirectory": "//wsl$/Ubuntu-20.04/home/kristoff/"
+                "name": "Developer Command Prompt for VS 2019",
+                "source": "Windows.Terminal.VisualStudio"
+            },
+            {
+                "guid": "{241a967e-5340-5868-9cbb-ba405b5f305d}",
+                "hidden": false,
+                "name": "Developer PowerShell for VS 2019",
+                "source": "Windows.Terminal.VisualStudio"
+            },
+            {
+                "guid": "{937e8286-4a89-58f6-8dc5-4fa8740ca7b5}",
+                "hidden": true,
+                "name": "Developer Command Prompt for VS 2017",
+                "source": "Windows.Terminal.VisualStudio"
             }
         ]
     },
@@ -445,6 +455,29 @@
             "selectionBackground": "#C3DCFF",
             "white": "#D3D7CF",
             "yellow": "#F0E53A"
+        },
+        {
+            "background": "#1E1E1E",
+            "black": "#232323",
+            "blue": "#008DF8",
+            "brightBlack": "#444444",
+            "brightBlue": "#0092FF",
+            "brightCyan": "#67FFF0",
+            "brightGreen": "#ABE15B",
+            "brightPurple": "#FF000F",
+            "brightRed": "#FF2740",
+            "brightWhite": "#FFFFFF",
+            "brightYellow": "#FFD242",
+            "cursorColor": "#D41919",
+            "cyan": "#00D8EB",
+            "foreground": "#FFFFFF",
+            "green": "#8CE10B",
+            "name": "Flat Remix",
+            "purple": "#FF000F",
+            "red": "#FF000F",
+            "selectionBackground": "#97A39D",
+            "white": "#FFFFFF",
+            "yellow": "#FFB900"
         },
         {
             "background": "#1D1F21",
