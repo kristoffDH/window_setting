@@ -14,6 +14,14 @@
         {
             "command": 
             {
+                "action": "resizePane",
+                "direction": "up"
+            },
+            "keys": "ctrl+shift+up"
+        },
+        {
+            "command": 
+            {
                 "action": "splitPane",
                 "split": "auto",
                 "splitMode": "duplicate"
@@ -32,26 +40,11 @@
         {
             "command": 
             {
-                "action": "resizePane",
-                "direction": "up"
+                "action": "splitPane",
+                "split": "down",
+                "splitMode": "duplicate"
             },
-            "keys": "ctrl+shift+up"
-        },
-        {
-            "command": 
-            {
-                "action": "moveFocus",
-                "direction": "down"
-            },
-            "keys": "alt+down"
-        },
-        {
-            "command": 
-            {
-                "action": "switchToTab",
-                "index": 7
-            },
-            "keys": "ctrl+8"
+            "keys": "ctrl+shift+o"
         },
         {
             "command": 
@@ -64,11 +57,18 @@
         {
             "command": 
             {
-                "action": "splitPane",
-                "split": "down",
-                "splitMode": "duplicate"
+                "action": "switchToTab",
+                "index": 7
             },
-            "keys": "ctrl+shift+o"
+            "keys": "ctrl+8"
+        },
+        {
+            "command": 
+            {
+                "action": "moveFocus",
+                "direction": "down"
+            },
+            "keys": "alt+down"
         },
         {
             "command": "unbound",
@@ -173,14 +173,6 @@
         {
             "command": 
             {
-                "action": "moveFocus",
-                "direction": "left"
-            },
-            "keys": "alt+left"
-        },
-        {
-            "command": 
-            {
                 "action": "resizePane",
                 "direction": "down"
             },
@@ -189,10 +181,10 @@
         {
             "command": 
             {
-                "action": "resizePane",
+                "action": "moveFocus",
                 "direction": "left"
             },
-            "keys": "ctrl+shift+left"
+            "keys": "alt+left"
         },
         {
             "command": 
@@ -201,6 +193,14 @@
                 "index": 1
             },
             "keys": "ctrl+2"
+        },
+        {
+            "command": 
+            {
+                "action": "resizePane",
+                "direction": "left"
+            },
+            "keys": "ctrl+shift+left"
         },
         {
             "command": 
@@ -257,12 +257,15 @@
         "defaults": 
         {
             "colorScheme": "Flat Remix",
+            "experimental.retroTerminalEffect": false,
             "font": 
             {
                 "face": "Hack NF",
                 "size": 10,
                 "weight": "bold"
-            }
+            },
+            "opacity": 90,
+            "useAcrylic": false
         },
         "list": 
         [
