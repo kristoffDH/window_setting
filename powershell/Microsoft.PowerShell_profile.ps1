@@ -1,42 +1,24 @@
 
-
-oh-my-posh --init --shell pwsh --config ~/.mytheme.omp.json | Invoke-Expression
-
+# window curl setting
 del alias:curl
 
-Set-Alias ls lsd -Option AllScope
-New-Alias vi vim 
+# oh-my-posh module
+oh-my-posh init pwsh --config ~/.mytheme.omp.json | Invoke-Expression
 
-function config {
-	vi $PROFILE.CurrentUserCurrentHost
-}
+# dir icon setting
+Import-Module -Name Terminal-Icons
 
-function config-code {
-	vi $PROFILE.CurrentUserCurrentHost
-}
-
-function ll {
-	lsd -al
-}
-
-function lt {
-	lsd --tree
-}
-
-function omp-theme {
-
-	Get-ChildItem -Path "~\Desktop\window_setting\oh-my-posh theme\*"  -Include '*.omp.json' `
-	| Sort-Object Name `
-	| ForEach-Object -Process `
-	{ 
-		$esc = [char]27
-		Write-Host ">>>" 
-		Write-Host "$esc[1m$($_.BaseName)$esc[0m"
-		Write-Host ""
-		oh-my-posh --config $($_.FullName) --pwd $PWD
-		Write-Host ""
-		Write-Host "========================================================"
-	}
-}
-
+# ssh custom module
 Import-Module ~/Documents/WindowsPowerShell/ssh-util.psm1;
+
+# set alias
+Set-Alias ls dir -Option AllScope
+
+# function list
+function config {
+	code $PROFILE.CurrentUserCurrentHost
+}
+
+function update-posh {
+	winget upgrade JanDeDobbeleer.OhMyPosh -s winget
+}

@@ -18,19 +18,6 @@
 
 * oh my posh
     > winget install JanDeDobbeleer.OhMyPosh
-    
-    > theme view
-        Get-ChildItem -Path "~\AppData\Local\Programs\oh-my-posh\themes\*" -Include '*.omp.json' | Sort-Object Name | ForEach-Object -Process {
-            $esc = [char]27
-            Write-Host ""
-            Write-Host "$esc[1m$($_.BaseName)$esc[0m"
-            Write-Host ""
-            oh-my-posh --config $($_.FullName) --pwd $PWD
-            Write-Host ""
-        }
-
-    > upgrade
-        winget upgrade JanDeDobbeleer.OhMyPosh
 
     > Export Current theme 
         Export-PoshTheme -FilePath ~/.mytheme.omp.json -Format json
@@ -47,30 +34,21 @@
 * window git
     > https://git-scm.com/downloads
 
-* powershell sudo
-    > Install-Module -Name Sudo
+
 
 * window curl install
     > sudo choco install -y curl
     
     > del alias:curl (이 명령어로 powershell에 기본 설정되어있는 curl 해제 필요)
 
-* window vim install
-    > https://www.vim.org/download.php - 환경 변수 따로 등록 필요
-
-    > vim plug 설치
-        1. plug.vim파일을 (https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim) 아래 경로에 다운로드 함.
-            %USERPROFILE%\vimfiles\autoload\plug.vim
-
-        
-        2. %USERPROFILE%\.vimrc 파일 생성 후 아래와 같이 설정
-            call plug#begin('~/.vim/plugged')
-
-        3. .vimrc파일에 linux_setting 리파지토리에 있는 init.vim에서 14라인(theme 부분)부터 끝가지 복사하여 붙여넣기.
-
-        4. vi 실행 후 :PlugInstall 실행
 
 
+* powershell install module list
+    > powershell sudo
+        Install-Module -Name Sudo
 
-* zlocation 설치
-    > Install-Module ZLocation -Scope CurrentUser; Import-Module ZLocation; Add-Content -Value "`r`n`r`nImport-Module ZLocation`r`n" -Encoding utf8 -Path $PROFILE.CurrentUserCurrentHost
+    > dir icon setting
+        Install-Module -Name Terminal-Icons -Repository PSGallery
+
+    > yaml parser
+        Install-Module powershell-yaml
