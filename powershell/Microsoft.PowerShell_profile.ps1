@@ -56,3 +56,8 @@ function open-ps-path {
 function open-home {
     ii ~
 }
+
+function which ($command) {
+    Get-Command -Name $command -ErrorAction SilentlyContinue |
+      Select-Object -ExpandProperty Path -ErrorAction SilentlyContinue
+}
