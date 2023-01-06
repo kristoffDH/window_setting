@@ -6,7 +6,7 @@
       "segments": [
         {
           "background": "#000000",
-          "foreground": "#ffe44e",
+          "foreground": "#FFB900",
           "leading_diamond": "",
           "style": "diamond",
           "template": " \uf120 {{ .Name }} ",
@@ -52,7 +52,7 @@
           "type": "git"
         },
         {
-          "background": "#f1d324",
+          "background": "#FFB900",
           "foreground": "#000000",
           "properties": {
             "style": "roundrock",
@@ -232,7 +232,7 @@
           "type": "battery"
         },
         {
-          "background": "#f1d324",
+          "background": "#FFB900",
           "foreground": "#000000",
           "invert_powerline": true,
           "leading_diamond": "\ue0b2",
