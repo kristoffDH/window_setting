@@ -52,3 +52,9 @@
 
     > yaml parser
         Install-Module powershell-yaml
+    
+    > fzf
+        Install-Module -Name PSFzf -Scope CurrentUser
+
+    > z module
+        Install-Module -Name z
