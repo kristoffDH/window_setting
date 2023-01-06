@@ -13,8 +13,10 @@ Import-Module ~/Documents/WindowsPowerShell/ssh-util.psm1;
 
 # set alias
 Set-Alias ls dir -Option AllScope
+Set-Alias ll dir -Option AllScope
 
 $window_profile_backup = "~/Desktop/window_setting"
+$powershell_script_path = "~/Documents/WindowsPowerShell"
 
 # function list
 function config {
@@ -37,6 +39,14 @@ function update-ps-profile {
 	cp $PROFILE.CurrentUserCurrentHost $window_profile_backup"/powershell"
 }
 
-function path-ps-profile {
-	$window_profile_backup
+function move-winsetting {
+	cd $window_profile_backup
+}
+
+function open-ps-path {
+	ii $powershell_script_path
+}
+
+function open-home {
+	ii ~
 }
