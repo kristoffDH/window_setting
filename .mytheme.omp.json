@@ -9,7 +9,7 @@
           "foreground": "#FFB900",
           "leading_diamond": "",
           "style": "diamond",
-          "template": " \uf120 {{ .Name }} ",
+          "template": " \uf17a ",
           "type": "shell"
         },
         {
@@ -24,12 +24,12 @@
           "foreground": "#ffffff",
           "powerline_symbol": "\ue0b0",
           "properties": {
-            "folder_icon": " \uf07b ",
+            "folder_icon": "\uf07b",
             "home_icon": "\uf015",
             "style": "folder"
           },
           "style": "powerline",
-          "template": " \uf07b \uf553 {{ .Path }} ",
+          "template": " \uf07b \uf105 {{ .Path }} ",
           "type": "path"
         },
         {
@@ -128,7 +128,7 @@
             "always_enabled": true
           },
           "style": "plain",
-          "template": "\ue285\ufb00 ",
+          "template": "\uf101 ",
           "type": "exit"
         }
       ],
