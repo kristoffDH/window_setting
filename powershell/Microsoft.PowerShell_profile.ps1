@@ -8,9 +8,8 @@ Import-Module -Name Terminal-Icons
 # ssh custom module
 Import-Module ~/Documents/PowerShell/ssh-util.psm1;
 
-# set alias
-Set-Alias ls dir -Option AllScope
-Set-Alias ll dir -Option AllScope
+# Alias
+Remove-Alias ls
 
 $window_profile_backup = "~/Desktop/window_setting"
 $powershell_script_path = "~/Documents/PowerShell"
@@ -27,6 +26,22 @@ Import-Module PSFzf
 # Set-PsFzfOption -PSReadlineChordProvider 'Ctrl+f' -PSReadlineChordReverseHistory 'Ctrl+r'
 
 # function list
+function ll { 
+    dir 
+}
+
+function ld { 
+    dir -directory 
+}
+
+function lf { 
+    dir -file 
+}
+
+function ls { 
+    dir | Format-Wide
+}
+
 function config {
     code $PROFILE.CurrentUserCurrentHost
 }
@@ -35,16 +50,12 @@ function update-posh {
     winget upgrade JanDeDobbeleer.OhMyPosh -s winget
 }
 
-function ld {
-    dir -directory
-}
-
-function lf {
-    dir -file
-}
-
 function update-ps-profile {
     cp $PROFILE.CurrentUserCurrentHost $window_profile_backup"/powershell"
+    cd $window_profile_backup
+    git add .
+    git commit -m "update window ps profile"
+    git push
 }
 
 function move-winsetting {
@@ -75,10 +86,12 @@ function fnc-list {
     Write-Host "Custom Function List"
     Write-Host "=======================" -ForegroundColor Green
     
-    Write-Host "config" -ForegroundColor Yellow
-    Write-Host "update-posh" -ForegroundColor Yellow
+    Write-Host "ll" -ForegroundColor Yellow
+    Write-Host "ls" -ForegroundColor Yellow
     Write-Host "ld" -ForegroundColor Yellow
     Write-Host "lf" -ForegroundColor Yellow
+    Write-Host "config" -ForegroundColor Yellow
+    Write-Host "update-posh" -ForegroundColor Yellow
     Write-Host "update-ps-profile" -ForegroundColor Yellow
     Write-Host "move-winsetting" -ForegroundColor Yellow
     Write-Host "open-ps-path" -ForegroundColor Yellow
