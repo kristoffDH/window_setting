@@ -19,18 +19,6 @@
           "type": "os"
         },
         {
-          "background": "#FEF5ED",
-          "foreground": "#011627",
-          "leading_diamond": "\ue0b2",
-          "properties": {
-            "time_format": "15:04:05"
-          },
-          "style": "diamond",
-          "template": "  {{ .CurrentDate | date .Format }} ",
-          "trailing_diamond": "<transparent,#FEF5ED>\ue0b2</>",
-          "type": "time"
-        },
-        {
           "background": "#0a7be6",
           "foreground": "#ffffff",
           "leading_diamond": "\ue0b2",
@@ -43,7 +31,7 @@
           "foreground": "#ffffff",
           "style": "diamond",
           "template": "RAM: {{ (div ((sub .PhysicalTotalMemory .PhysicalFreeMemory)|float64) 1000000000.0) }}/{{ (div .PhysicalTotalMemory 1068786176.0) }}GB \uf85a ",
-          "trailing_diamond": "<transparent,#516BEB>\ue0b2</>",
+          "trailing_diamond": "<transparent,#0a7be6>\ue0b2</>",
           "type": "sysinfo"
         },
         {
@@ -65,6 +53,18 @@
     {
       "alignment": "right",
       "segments": [
+        {
+          "background": "#FEF5ED",
+          "foreground": "#011627",
+          "leading_diamond": "\ue0b2",
+          "properties": {
+            "time_format": "15:04:05"
+          },
+          "style": "diamond",
+          "template": "  {{ .CurrentDate | date .Format }} ",
+          "trailing_diamond": "<transparent,#FEF5ED>\ue0b2</>",
+          "type": "time"
+        },
         {
           "background": "#ffffff",
           "foreground": "#000000",
