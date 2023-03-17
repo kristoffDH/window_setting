@@ -51,11 +51,13 @@ function update-posh {
 }
 
 function update-ps-profile {
+    $cur_path = pwd
     cp $PROFILE.CurrentUserCurrentHost $window_profile_backup"/powershell"
     cd $window_profile_backup
     git add .
-    git commit -m "update window ps profile"
+    git commit -m "update window setting"
     git push
+    cd $cur_path
 }
 
 function move-winsetting {
