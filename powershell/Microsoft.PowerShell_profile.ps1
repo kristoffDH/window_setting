@@ -72,8 +72,12 @@ function open-home {
     ii ~
 }
 
-function open-history-file {
-    ii $history_backup_file_path
+function del_history {
+    $cur_path = pwd
+    cd $history_backup_file_path
+    $file_path = pwd
+    code $file_path"/ConsoleHost_history.txt"
+    cd $cur_path
 }
 
 function which ($command) {
@@ -99,5 +103,5 @@ function fnc-list {
     Write-Host "open-ps-path" -ForegroundColor Yellow
     Write-Host "open-home" -ForegroundColor Yellow
     Write-Host "which" -ForegroundColor Yellow
-    Write-Host "open-history-file" -ForegroundColor Yellow
+    Write-Host "del_history" -ForegroundColor Yellow
 }
