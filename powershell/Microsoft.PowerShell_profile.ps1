@@ -27,7 +27,7 @@ Import-Module PSFzf
 
 # function list
 function ll { 
-    dir 
+    dir -Force
 }
 
 function ld { 
