@@ -15,6 +15,7 @@ Remove-Alias ls
 $omp_config_file = "~/.mytheme.omp.json"
 $window_setting_backup = "~/Desktop/window_setting"
 $history_backup_file_path = "~/AppData/Roaming/Microsoft/Windows/PowerShell/PSReadLine"
+$ssh_config_file = "~/.ssh/config"
 
 # PSReadLine
 # Set-PSReadLineOption -BellStyle None
@@ -71,6 +72,10 @@ function update-omp-config {
     cd $cur_path
 }
 
+function open-ssh-config {
+    code $ssh_config_file
+}
+
 function open-window-setting-backup {
     cd $window_setting_backup
 }
@@ -107,6 +112,7 @@ function fnc-list {
     Write-Host "update-posh" -ForegroundColor Yellow
     Write-Host "update-ps-profile" -ForegroundColor Yellow
     Write-Host "update-omp-config" -ForegroundColor Yellow
+    Write-Host "open-ssh-config" -ForegroundColor Yellow
     Write-Host "open-window-setting-backup" -ForegroundColor Yellow
     Write-Host "home" -ForegroundColor Yellow
     Write-Host "which" -ForegroundColor Yellow
