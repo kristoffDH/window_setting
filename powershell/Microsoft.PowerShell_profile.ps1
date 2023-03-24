@@ -11,8 +11,9 @@ Import-Module ~/Documents/PowerShell/ssh-util.psm1;
 # Alias
 Remove-Alias ls
 
-$window_profile_backup = "~/Desktop/window_setting"
-$powershell_script_path = "~/Documents/PowerShell"
+# config path setting
+$omp_config_file = "~/.mytheme.omp.json"
+$window_setting_backup = "~/Desktop/window_setting"
 $history_backup_file_path = "~/AppData/Roaming/Microsoft/Windows/PowerShell/PSReadLine"
 
 # PSReadLine
@@ -22,12 +23,12 @@ Set-PSReadLineOption -PredictionSource History
 Set-PSReadLineOption -PredictionViewStyle ListView
 
 # fzf
-Import-Module PSFzf
+# Import-Module PSFzf
 # Set-PsFzfOption -PSReadlineChordProvider 'Ctrl+f' -PSReadlineChordReverseHistory 'Ctrl+r'
 
 # function list
 function ll { 
-    dir -Force
+    dir 
 }
 
 function ld { 
@@ -52,23 +53,29 @@ function update-posh {
 
 function update-ps-profile {
     $cur_path = pwd
-    cp $PROFILE.CurrentUserCurrentHost $window_profile_backup"/powershell"
-    cd $window_profile_backup
+    cd $window_setting_backup
+    cp $PROFILE.CurrentUserCurrentHost "./powershell"
     git add .
     git commit -m "update window setting"
     git push
     cd $cur_path
 }
 
-function move-winsetting {
-    cd $window_profile_backup
+function update-omp-config {
+    $cur_path = pwd
+    cd $window_setting_backup
+    cp $omp_config_file "./powershell"
+    git add .
+    git commit -m "update omp setting"
+    git push
+    cd $cur_path
 }
 
-function open-ps-path {
-    ii $powershell_script_path
+function open-window-setting-backup {
+    cd $window_setting_backup
 }
 
-function open-home {
+function home {
     ii ~
 }
 
@@ -99,9 +106,9 @@ function fnc-list {
     Write-Host "config" -ForegroundColor Yellow
     Write-Host "update-posh" -ForegroundColor Yellow
     Write-Host "update-ps-profile" -ForegroundColor Yellow
-    Write-Host "move-winsetting" -ForegroundColor Yellow
-    Write-Host "open-ps-path" -ForegroundColor Yellow
-    Write-Host "open-home" -ForegroundColor Yellow
+    Write-Host "update-omp-config" -ForegroundColor Yellow
+    Write-Host "open-window-setting-backup" -ForegroundColor Yellow
+    Write-Host "home" -ForegroundColor Yellow
     Write-Host "which" -ForegroundColor Yellow
     Write-Host "del_history" -ForegroundColor Yellow
 }
