@@ -6,8 +6,12 @@
 3. powershell 재실행
 
 
+
+
 ## window terminal setting
 windw-term.setting.json 파일의 내용을 window terminal의 json 설정 파일에 내용을 덮어쓰기
+
+
 
 
 ## powershell config
@@ -17,3 +21,12 @@ notepax.exe $PROFILE.CurrentUserCurrentHost
 ```
 
 "Microsoft.PowerShell_profile.ps1"의 내용을 위의 파일에 덮어쓰기
+
+
+
+## lsd config
+
+### 설정 경로
+
+* path : %APPDATA%/lsd/config.yaml
+* 기본적으로 위의 경로에 lsd 폴더를 생성후 파일 추가해야함.
