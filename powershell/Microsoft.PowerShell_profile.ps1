@@ -54,6 +54,13 @@ function ssh-config {
     cd $cur_path
 }
 
+function omp-config {
+    $cur_path = pwd
+    cd
+    code ./.mytheme.omp.json
+    cd $cur_path
+}
+
 function show-rsa-pubkey {
     cat "~/.ssh/id_rsa.pub"
 }
@@ -116,6 +123,7 @@ function fnc-list {
     Write-Host "lf" -ForegroundColor Yellow
     Write-Host "config" -ForegroundColor Yellow
     Write-Host "ssh-config" -ForegroundColor Yellow
+    Write-Host "omp-config" -ForegroundColor Yellow
     Write-Host "show-rsa-pubkey" -ForegroundColor Yellow
     Write-Host "update-posh" -ForegroundColor Yellow
     Write-Host "update-ps-profile" -ForegroundColor Yellow
