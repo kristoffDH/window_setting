@@ -5,9 +5,6 @@ oh-my-posh init pwsh --config ~/.mytheme.omp.json | Invoke-Expression
 # dir icon setting
 Import-Module -Name Terminal-Icons
 
-# ssh custom module
-Import-Module ~/Documents/PowerShell/ssh-util.psm1;
-
 # Alias
 Remove-Alias ls
 
@@ -17,30 +14,25 @@ $window_setting_backup = "~/Desktop/window_setting"
 $history_backup_file_path = "~/AppData/Roaming/Microsoft/Windows/PowerShell/PSReadLine"
 
 # PSReadLine
-# Set-PSReadLineOption -BellStyle None
-# Set-PSReadLineKeyHandler -Chord 'Ctrl+d' -Function DeleteChar
 Set-PSReadLineOption -PredictionSource History
 Set-PSReadLineOption -PredictionViewStyle ListView
 
-# fzf
-# Import-Module PSFzf
-# Set-PsFzfOption -PSReadlineChordProvider 'Ctrl+f' -PSReadlineChordReverseHistory 'Ctrl+r'
+
 
 # function list
-function ll { 
-    dir 
-}
-
-function ld { 
-    dir -directory 
-}
-
-function lf { 
-    dir -file 
-}
-
 function ls { 
-    dir | Format-Wide
+    lsd
+}
+
+function ll { 
+    lsd -al
+}
+
+function lsd-config {
+    $cur_path = pwd
+    cd $env:APPDATA
+    code ./lsd/config.yaml
+    cd $cur_path
 }
 
 function config {
@@ -67,6 +59,16 @@ function show-rsa-pubkey {
 
 function update-posh {
     winget upgrade JanDeDobbeleer.OhMyPosh -s winget
+}
+
+function update-lsd-config {
+    $cur_path = pwd
+    cd $window_setting_backup
+    cp $env:APPDATA/lsd/config.yaml .
+    git add .
+    git commit -m "update lsd config"
+    git push
+    cd $cur_path
 }
 
 function update-ps-profile {
@@ -117,11 +119,10 @@ function fnc-list {
     Write-Host "Custom Function List"
     Write-Host "=======================" -ForegroundColor Green
     
-    Write-Host "ll" -ForegroundColor Yellow
     Write-Host "ls" -ForegroundColor Yellow
-    Write-Host "ld" -ForegroundColor Yellow
-    Write-Host "lf" -ForegroundColor Yellow
+    Write-Host "ll" -ForegroundColor Yellow
     Write-Host "config" -ForegroundColor Yellow
+    Write-Host "lsd-config" -ForegroundColor Yellow
     Write-Host "ssh-config" -ForegroundColor Yellow
     Write-Host "omp-config" -ForegroundColor Yellow
     Write-Host "show-rsa-pubkey" -ForegroundColor Yellow
