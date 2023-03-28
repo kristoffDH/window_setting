@@ -28,28 +28,6 @@
           "type": "path"
         },
         {
-          "background": "#1affbe",
-          "background_templates": [
-            "{{ if or (.Working.Changed) (.Staging.Changed) }}#fae682{{ end }}",
-            "{{ if and (gt .Ahead 0) (gt .Behind 0) }}#da2525{{ end }}",
-            "{{ if gt .Ahead 0 }}#3694ff{{ end }}",
-            "{{ if gt .Behind 0 }}#b145f8{{ end }}"
-          ],
-          "foreground": "#011627",
-          "leading_diamond": "",
-          "properties": {
-            "branch_icon": "\ue725 ",
-            "fetch_stash_count": true,
-            "fetch_status": true,
-            "fetch_upstream_icon": true,
-            "fetch_worktree_count": true
-          },
-          "style": "diamond",
-          "template": " {{ .UpstreamIcon }}{{ .HEAD }}{{if .BranchStatus }} {{ .BranchStatus }}{{ end }}{{ if .Working.Changed }} \uf044 {{ .Working.String }}{{ end }}{{ if and (.Working.Changed) (.Staging.Changed) }} |{{ end }}{{ if .Staging.Changed }} \uf046 {{ .Staging.String }}{{ end }}{{ if gt .StashCount 0 }} \uf692 {{ .StashCount }}{{ end }} ",
-          "trailing_diamond": "<transparent,#1affbe></>",
-          "type": "git"
-        },
-        {
           "background": "#575656",
           "foreground": "#d6deeb",
           "leading_diamond": "",
@@ -61,6 +39,28 @@
           "template": " {{ .FormattedMs }} ",
           "trailing_diamond": "",
           "type": "executiontime"
+        },
+        {
+          "background": "#1affbe",
+          "background_templates": [
+            "{{ if or (.Working.Changed) (.Staging.Changed) }}#fae682{{ end }}",
+            "{{ if and (gt .Ahead 0) (gt .Behind 0) }}#da2525{{ end }}",
+            "{{ if gt .Ahead 0 }}#3694ff{{ end }}",
+            "{{ if gt .Behind 0 }}#b145f8{{ end }}"
+          ],
+          "foreground": "#011627",
+          "leading_diamond": "",
+          "properties": {
+            "branch_icon": "\ue725 ",
+            "fetch_stash_count": true,
+            "fetch_status": true,
+            "fetch_upstream_icon": true,
+            "fetch_worktree_count": true
+          },
+          "style": "diamond",
+          "template": " {{ .UpstreamIcon }}{{ .HEAD }}{{if .BranchStatus }} {{ .BranchStatus }}{{ end }}{{ if .Working.Changed }} \uf044 {{ .Working.String }}{{ end }}{{ if and (.Working.Changed) (.Staging.Changed) }} |{{ end }}{{ if .Staging.Changed }} \uf046 {{ .Staging.String }}{{ end }}{{ if gt .StashCount 0 }} \uf692 {{ .StashCount }}{{ end }} ",
+          "trailing_diamond": "",
+          "type": "git"
         }
       ],
       "type": "prompt"
