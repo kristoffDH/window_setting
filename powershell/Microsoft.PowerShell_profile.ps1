@@ -2,11 +2,11 @@
 # oh-my-posh module
 oh-my-posh init pwsh --config ~/.mytheme.omp.json | Invoke-Expression
 
-# dir icon setting
-Import-Module -Name Terminal-Icons
-
-# Alias
-Remove-Alias ls
+# Remove-Alias 
+$alias_result = Alias | Select-String 'ls ->'
+if (!$alias_result) {
+    Remove-Alias ls
+}
 
 # config path setting
 $omp_config_file = "~/.mytheme.omp.json"
@@ -16,7 +16,6 @@ $history_backup_file_path = "~/AppData/Roaming/Microsoft/Windows/PowerShell/PSRe
 # PSReadLine
 Set-PSReadLineOption -PredictionSource History
 Set-PSReadLineOption -PredictionViewStyle ListView
-
 
 
 # function list
@@ -55,6 +54,18 @@ function omp-config {
 
 function show-rsa-pubkey {
     cat "~/.ssh/id_rsa.pub"
+}
+
+function show-remote-host {
+    $remote_hosts = cat "~/.ssh/config" | Select-String "Host "
+
+    foreach ($remote_host in $remote_hosts) {
+        Write-Host $remote_host.Split(" ")
+    }
+}
+
+function sync-profile {
+    . $profile
 }
 
 function update-posh {
@@ -126,6 +137,8 @@ function fnc-list {
     Write-Host "ssh-config" -ForegroundColor Yellow
     Write-Host "omp-config" -ForegroundColor Yellow
     Write-Host "show-rsa-pubkey" -ForegroundColor Yellow
+    Write-Host "show-remote-host" -ForegroundColor Yellow
+    Write-Host "sync-profile" -ForegroundColor Yellow
     Write-Host "update-posh" -ForegroundColor Yellow
     Write-Host "update-ps-profile" -ForegroundColor Yellow
     Write-Host "update-omp-config" -ForegroundColor Yellow
