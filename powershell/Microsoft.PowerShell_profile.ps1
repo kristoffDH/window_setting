@@ -4,7 +4,7 @@ oh-my-posh init pwsh --config ~/.mytheme.omp.json | Invoke-Expression
 
 # Remove-Alias 
 $alias_result = Alias | Select-String 'ls ->'
-if (!$alias_result) {
+if ($alias_result) {
     Remove-Alias ls
 }
 
@@ -56,18 +56,6 @@ function show-rsa-pubkey {
     cat "~/.ssh/id_rsa.pub"
 }
 
-function show-remote-host {
-    $remote_hosts = cat "~/.ssh/config" | Select-String "Host "
-
-    foreach ($remote_host in $remote_hosts) {
-        Write-Host $remote_host.Split(" ")
-    }
-}
-
-function sync-profile {
-    . $profile
-}
-
 function update-posh {
     winget upgrade JanDeDobbeleer.OhMyPosh -s winget
 }
@@ -106,10 +94,6 @@ function open-window-setting-backup {
     cd $window_setting_backup
 }
 
-function home {
-    ii ~
-}
-
 function del_history {
     $cur_path = pwd
     cd $history_backup_file_path
@@ -137,13 +121,10 @@ function fnc-list {
     Write-Host "ssh-config" -ForegroundColor Yellow
     Write-Host "omp-config" -ForegroundColor Yellow
     Write-Host "show-rsa-pubkey" -ForegroundColor Yellow
-    Write-Host "show-remote-host" -ForegroundColor Yellow
-    Write-Host "sync-profile" -ForegroundColor Yellow
     Write-Host "update-posh" -ForegroundColor Yellow
     Write-Host "update-ps-profile" -ForegroundColor Yellow
     Write-Host "update-omp-config" -ForegroundColor Yellow
     Write-Host "open-window-setting-backup" -ForegroundColor Yellow
-    Write-Host "home" -ForegroundColor Yellow
     Write-Host "which" -ForegroundColor Yellow
     Write-Host "del_history" -ForegroundColor Yellow
 }
