@@ -2,129 +2,109 @@
 # oh-my-posh module
 oh-my-posh init pwsh --config ~/.mytheme.omp.json | Invoke-Expression
 
-# Remove-Alias 
-$alias_result = Alias | Select-String 'ls ->'
-if ($alias_result) {
-    Remove-Alias ls
-}
+# setting env path
+$Env:python_path = "C:$env:HOMEPATH\python_module"
+$Env:Path += ";$Env:python_path;"
+
+# Alias 
+Set-Alias ls lsd
+Set-Alias ssh-util ssh_util
 
 # config path setting
-$omp_config_file = "~/.mytheme.omp.json"
-$window_setting_backup = "~/Desktop/window_setting"
-$history_backup_file_path = "~/AppData/Roaming/Microsoft/Windows/PowerShell/PSReadLine"
+$omp_config_file = "$env:HOMEPATH/.mytheme.omp.json"
+$window_setting_backup = "$env:HOMEPATH/Desktop/window_setting"
+$history_backup_file_path = "$env:APPDATA/Microsoft/Windows/PowerShell/PSReadLine"
 
 # PSReadLine
 Set-PSReadLineOption -PredictionSource History
 Set-PSReadLineOption -PredictionViewStyle ListView
 
-
 # function list
-function ls { 
-    lsd
-}
-
-function ll { 
+function ll {
     lsd -al
 }
-
-function lsd-config {
-    $cur_path = pwd
-    cd $env:APPDATA
-    code ./lsd/config.yaml
-    cd $cur_path
-}
-
-function config {
+function Config {
     code $PROFILE.CurrentUserCurrentHost
 }
-
-function ssh-config {
-    $cur_path = pwd
-    cd
-    code ./.ssh/config
-    cd $cur_path
+function Config-lsd {
+    code $env:APPDATA/lsd/config.yaml
 }
 
-function omp-config {
-    $cur_path = pwd
-    cd
-    code ./.mytheme.omp.json
-    cd $cur_path
+function Config-omp {
+    code $env:HOMEPATH/.mytheme.omp.json
 }
 
-function show-rsa-pubkey {
-    cat "~/.ssh/id_rsa.pub"
+function Show-rsa-pubkey {
+    cat $env:HOMEPATH/.ssh/id_rsa.pub
 }
 
-function update-posh {
+function Update-posh {
     winget upgrade JanDeDobbeleer.OhMyPosh -s winget
 }
 
-function update-lsd-config {
+function Update-lsd-config {
     $cur_path = pwd
     cd $window_setting_backup
     cp $env:APPDATA/lsd/config.yaml .
     git add .
-    git commit -m "update lsd config"
+    git commit -m "Update lsd config"
     git push
     cd $cur_path
 }
 
-function update-ps-profile {
+function Update-ps-profile {
     $cur_path = pwd
     cd $window_setting_backup
     cp $PROFILE.CurrentUserCurrentHost "./powershell"
     git add .
-    git commit -m "update window setting"
+    git commit -m "Update window setting"
     git push
     cd $cur_path
 }
 
-function update-omp-config {
+function Update-omp-config {
     $cur_path = pwd
     cd $window_setting_backup
     cp $omp_config_file "./powershell"
     git add .
-    git commit -m "update omp setting"
+    git commit -m "Update omp setting"
     git push
     cd $cur_path
 }
 
-function open-window-setting-backup {
+function Open-win-backup {
     cd $window_setting_backup
 }
 
-function del_history {
-    $cur_path = pwd
-    cd $history_backup_file_path
-    $file_path = pwd
-    code $file_path"/ConsoleHost_history.txt"
-    cd $cur_path
+function Delete-ps-hist {
+    rm "$history_backup_file_path/ConsoleHost_history.txt"
 }
 
-function which ($command) {
-    Get-Command -Name $command -ErrorAction SilentlyContinue |
-    Select-Object -ExpandProperty Path -ErrorAction SilentlyContinue
+function Which {
+    param(
+        [String] $command
+    )
+    Get-Command -Name $command -ErrorAction SilentlyContinue 
 }
 
- 
-function fnc-list { 
+function path {
+    $env:Path.Split(";")
+}
 
-    Write-Host "=======================" -ForegroundColor Green
-    Write-Host "Custom Function List"
-    Write-Host "=======================" -ForegroundColor Green
+Function Get-CustomCmd {
+    Write-Host "== script func list ===="  -ForegroundColor Blue
     
-    Write-Host "ls" -ForegroundColor Yellow
-    Write-Host "ll" -ForegroundColor Yellow
-    Write-Host "config" -ForegroundColor Yellow
-    Write-Host "lsd-config" -ForegroundColor Yellow
-    Write-Host "ssh-config" -ForegroundColor Yellow
-    Write-Host "omp-config" -ForegroundColor Yellow
-    Write-Host "show-rsa-pubkey" -ForegroundColor Yellow
-    Write-Host "update-posh" -ForegroundColor Yellow
-    Write-Host "update-ps-profile" -ForegroundColor Yellow
-    Write-Host "update-omp-config" -ForegroundColor Yellow
-    Write-Host "open-window-setting-backup" -ForegroundColor Yellow
-    Write-Host "which" -ForegroundColor Yellow
-    Write-Host "del_history" -ForegroundColor Yellow
+    Get-Content -Path $profile | 
+    Select-String -Pattern "^function.+" | 
+    ForEach-Object {
+        [Regex]::Matches($_, "^function ([a-z0-9.-]+)", "IgnoreCase").Groups[1].Value
+    } | 
+    Sort-Object | 
+    Write-Host
+    
+    Write-Host "== binary list ====="  -ForegroundColor Blue
+    ls $Env:python_path | Select-String -Pattern "([\w _-]+).exe" | % { $_.Line.Split(".")[0] } | Sort-Object | Write-Host
+    
 }
+
+
