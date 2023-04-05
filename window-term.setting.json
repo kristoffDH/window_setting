@@ -1,16 +1,27 @@
 {
     "$help": "https://aka.ms/terminal-documentation",
     "$schema": "https://aka.ms/terminal-profiles-schema",
-    "actions": [
+    "actions": 
+    [
         {
-            "command": {
+            "command": 
+            {
                 "action": "switchToTab",
                 "index": 3
             },
             "keys": "ctrl+4"
         },
         {
-            "command": {
+            "command": 
+            {
+                "action": "resizePane",
+                "direction": "up"
+            },
+            "keys": "ctrl+shift+up"
+        },
+        {
+            "command": 
+            {
                 "action": "splitPane",
                 "split": "auto",
                 "splitMode": "duplicate"
@@ -18,62 +29,13 @@
             "keys": "alt+shift+d"
         },
         {
-            "command": {
+            "command": 
+            {
                 "action": "splitPane",
                 "split": "auto",
                 "splitMode": "duplicate"
             },
             "keys": "ctrl+shift+\\"
-        },
-        {
-            "command": {
-                "action": "resizePane",
-                "direction": "up"
-            },
-            "keys": "ctrl+shift+up"
-        },
-        {
-            "command": {
-                "action": "switchToTab",
-                "index": 0
-            },
-            "keys": "ctrl+1"
-        },
-        {
-            "command": {
-                "action": "splitPane",
-                "split": "down",
-                "splitMode": "duplicate"
-            },
-            "keys": "ctrl+shift+o"
-        },
-        {
-            "command": {
-                "action": "moveFocus",
-                "direction": "down"
-            },
-            "keys": "alt+down"
-        },
-        {
-            "command": {
-                "action": "switchToTab",
-                "index": 7
-            },
-            "keys": "ctrl+8"
-        },
-        {
-            "command": {
-                "action": "switchToTab",
-                "index": 2
-            },
-            "keys": "ctrl+3"
-        },
-        {
-            "command": {
-                "action": "resizePane",
-                "direction": "right"
-            },
-            "keys": "ctrl+shift+right"
         },
         {
             "command": "unbound",
@@ -116,31 +78,57 @@
             "keys": "ctrl+f"
         },
         {
-            "command": "paste",
-            "keys": "ctrl+v"
-        },
-        {
-            "command": {
-                "action": "copy",
-                "singleLine": false
+            "command": 
+            {
+                "action": "switchToTab",
+                "index": 7
             },
-            "keys": "ctrl+c"
+            "keys": "ctrl+8"
         },
         {
-            "command": {
-                "action": "newTab"
+            "command": 
+            {
+                "action": "switchToTab",
+                "index": 0
             },
-            "keys": "ctrl+t"
+            "keys": "ctrl+1"
         },
         {
-            "command": {
+            "command": 
+            {
+                "action": "splitPane",
+                "split": "down",
+                "splitMode": "duplicate"
+            },
+            "keys": "ctrl+shift+o"
+        },
+        {
+            "command": 
+            {
                 "action": "moveFocus",
-                "direction": "up"
+                "direction": "down"
             },
-            "keys": "alt+up"
+            "keys": "alt+down"
         },
         {
-            "command": {
+            "command": 
+            {
+                "action": "switchToTab",
+                "index": 2
+            },
+            "keys": "ctrl+3"
+        },
+        {
+            "command": 
+            {
+                "action": "resizePane",
+                "direction": "right"
+            },
+            "keys": "ctrl+shift+right"
+        },
+        {
+            "command": 
+            {
                 "action": "splitPane",
                 "split": "right",
                 "splitMode": "duplicate"
@@ -148,45 +136,93 @@
             "keys": "ctrl+shift+e"
         },
         {
-            "command": "find"
+            "command": "paste",
+            "keys": "ctrl+v"
         },
         {
-            "command": {
-                "action": "moveFocus",
-                "direction": "right"
+            "command": 
+            {
+                "action": "copy",
+                "singleLine": false
             },
-            "keys": "alt+right"
+            "keys": "ctrl+c"
         },
         {
-            "command": {
-                "action": "moveFocus",
-                "direction": "left"
+            "command": 
+            {
+                "action": "newTab"
             },
-            "keys": "alt+left"
+            "keys": "ctrl+t"
         },
         {
-            "command": {
-                "action": "resizePane",
-                "direction": "down"
-            },
-            "keys": "ctrl+shift+down"
-        },
-        {
-            "command": {
-                "action": "resizePane",
-                "direction": "left"
-            },
-            "keys": "ctrl+shift+left"
-        },
-        {
-            "command": {
+            "command": 
+            {
                 "action": "switchToTab",
                 "index": 1
             },
             "keys": "ctrl+2"
         },
         {
-            "command": {
+            "command": 
+            {
+                "action": "moveFocus",
+                "direction": "up"
+            },
+            "keys": "alt+up"
+        },
+        {
+            "command": "find"
+        },
+        {
+            "command": 
+            {
+                "action": "resizePane",
+                "direction": "left"
+            },
+            "keys": "ctrl+shift+left"
+        },
+        {
+            "command": 
+            {
+                "action": "closeTab"
+            },
+            "keys": "ctrl+q"
+        },
+        {
+            "command": 
+            {
+                "action": "moveFocus",
+                "direction": "right"
+            },
+            "keys": "alt+right"
+        },
+        {
+            "command": 
+            {
+                "action": "moveFocus",
+                "direction": "left"
+            },
+            "keys": "alt+left"
+        },
+        {
+            "command": 
+            {
+                "action": "resizePane",
+                "direction": "down"
+            },
+            "keys": "ctrl+shift+down"
+        },
+        {
+            "command": 
+            {
+                "action": "switchToTab",
+                "index": 6
+            },
+            "keys": "ctrl+7"
+        },
+        {
+            "command": 
+            {
                 "action": "switchToTab",
                 "index": 5
             },
@@ -197,27 +233,16 @@
             "keys": "ctrl+w"
         },
         {
-            "command": {
-                "action": "switchToTab",
-                "index": 6
-            },
-            "keys": "ctrl+7"
-        },
-        {
-            "command": {
-                "action": "closeTab"
-            },
-            "keys": "ctrl+q"
-        },
-        {
-            "command": {
+            "command": 
+            {
                 "action": "switchToTab",
                 "index": 4
             },
             "keys": "ctrl+5"
         },
         {
-            "command": {
+            "command": 
+            {
                 "action": "commandPalette"
             },
             "keys": "f1"
@@ -230,23 +255,28 @@
     "focusFollowMouse": false,
     "initialCols": 120,
     "initialRows": 40,
-    "profiles": {
-        "defaults": {
+    "profiles": 
+    {
+        "defaults": 
+        {
             "colorScheme": "Flat Remix",
             "cursorShape": "filledBox",
             "experimental.retroTerminalEffect": false,
-            "font": {
-                "face": "Hack NF",
-                "size": 10,
-                "weight": "bold"
+            "font": 
+            {
+                "face": "MesloLGS NF",
+                "size": 10.0,
+                "weight": "medium"
             },
-            "opacity": 90,
+            "opacity": 100,
             "useAcrylic": false
         },
-        "list": [
+        "list": 
+        [
             {
-                "font": {
-                    "size": 10,
+                "font": 
+                {
+                    "size": 10.0,
                     "weight": "bold"
                 },
                 "guid": "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}",
@@ -266,8 +296,9 @@
                 "commandline": "%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
                 "cursorShape": "bar",
                 "elevate": true,
-                "font": {
-                    "size": 10,
+                "font": 
+                {
+                    "size": 10.0,
                     "weight": "bold"
                 },
                 "guid": "{47d11284-f3ad-4eb7-9f10-3cb16ba1a13e}",
@@ -281,9 +312,10 @@
             }
         ]
     },
-    "schemes": [
+    "schemes": 
+    [
         {
-            "background": "#0E1019",
+            "background": "#000000",
             "black": "#232323",
             "blue": "#008DF8",
             "brightBlack": "#444444",
@@ -473,15 +505,15 @@
             "brightBlack": "#444444",
             "brightBlue": "#0092FF",
             "brightCyan": "#67FFF0",
-            "brightGreen": "#ABE15B",
-            "brightPurple": "#FF000F",
+            "brightGreen": "#9AFF87",
+            "brightPurple": "#FF2740",
             "brightRed": "#FF2740",
             "brightWhite": "#FFFFFF",
             "brightYellow": "#FFD242",
             "cursorColor": "#D41919",
             "cyan": "#00D8EB",
             "foreground": "#FFFFFF",
-            "green": "#8CE10B",
+            "green": "#1A921C",
             "name": "Flat Remix",
             "purple": "#FF000F",
             "red": "#FF000F",
@@ -1066,6 +1098,7 @@
         }
     ],
     "theme": "light",
+    "themes": [],
     "trimBlockSelection": true,
     "useAcrylicInTabRow": true
 }
