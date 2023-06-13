@@ -3,8 +3,8 @@
 oh-my-posh init pwsh --config ~/.mytheme.omp.json | Invoke-Expression
 
 # setting env path
-$Env:python_path = "C:$env:HOMEPATH\python_module"
-$Env:Path += ";$Env:python_path;"
+$Env:python_module = "C:$env:HOMEPATH\python_module"
+$Env:Path += ";$Env:python_module;"
 
 # Alias 
 Set-Alias ls lsd
@@ -23,6 +23,11 @@ Set-PSReadLineOption -PredictionViewStyle ListView
 function ll {
     lsd -al
 }
+
+function lt {
+    lsd --tree
+}
+
 function Config {
     code $PROFILE.CurrentUserCurrentHost
 }
@@ -103,7 +108,7 @@ Function Get-CustomCmd {
     Write-Host
     
     Write-Host "== binary list ====="  -ForegroundColor Blue
-    ls $Env:python_path | Select-String -Pattern "([\w _-]+).exe" | % { $_.Line.Split(".")[0] } | Sort-Object | Write-Host
+    ls $Env:python_module | Select-String -Pattern "([\w _-]+).exe" | % { $_.Line.Split(".")[0] } | Sort-Object | Write-Host
     
 }
 
