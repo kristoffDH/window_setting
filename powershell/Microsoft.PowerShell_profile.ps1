@@ -21,11 +21,21 @@ Set-PSReadLineOption -PredictionViewStyle ListView
 
 # function list
 function ll {
-    lsd -al
+    param (
+        [string]$Path = (Get-Location)
+    )
+
+    ECHO "PATH : $Path" 
+    lsd -al $Path
 }
 
 function lt {
-    lsd --tree
+    param (
+        [string]$Path = (Get-Location)
+    )
+    
+    ECHO "PATH : $Path" 
+    lsd --tree $Path
 }
 
 function Config {
