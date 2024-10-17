@@ -26,7 +26,7 @@ function ll {
     )
 
     ECHO "PATH : $Path" 
-    lsd -al $Path
+    lsd -alg $Path
 }
 
 function lt {
