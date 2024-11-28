@@ -1,0 +1,84 @@
+{
+    "workbench.startupEditor": "none",
+    "terminal.integrated.fontFamily": "MesloLGS NF",
+    "terminal.integrated.profiles.windows": {
+        "PowerShell": null,
+        "PowerShell 7": {
+            "path": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+            "args": []
+        },
+        "Command Prompt": {
+            "path": [
+                "${env:windir}\\Sysnative\\cmd.exe",
+                "${env:windir}\\System32\\cmd.exe"
+            ],
+            "args": [],
+            "icon": "terminal-cmd"
+        },
+    },
+    "terminal.integrated.defaultProfile.windows": "PowerShell",
+    "remote.SSH.remotePlatform": {
+        "192.168.56.103": "linux",
+        "TX": "linux",
+        "local": "linux",
+        "local_rx": "linux"
+    },
+    "update.showReleaseNotes": false,
+    "cmake.pinnedCommands": [
+        "workbench.action.tasks.configureTaskRunner",
+        "workbench.action.tasks.runTask"
+    ],
+    "editor.fontFamily": "D2Coding, 'Courier New', monospace",
+    "security.workspace.trust.untrustedFiles": "open",
+    "workbench.activityBar.location": "top",
+    "terminal.integrated.profiles.linux": {
+        "bash": {
+            "path": "bash",
+            "icon": "terminal-bash"
+        },
+        "zsh": {
+            "path": "zsh"
+        },
+        "fish": {
+            "path": "fish"
+        },
+        "tmux": {
+            "path": "tmux",
+            "icon": "terminal-tmux"
+        },
+        "pwsh": {
+            "path": "pwsh",
+            "icon": "terminal-powershell"
+        },
+        "bash (2)": {
+            "path": "/usr/bin/bash"
+        }
+    },
+    "terminal.integrated.defaultProfile.linux": "bash (2)",
+    "workbench.iconTheme": "material-icon-theme",
+    "extensions.ignoreRecommendations": true,
+    "workbench.colorTheme": "Panda Syntax",
+    "workbench.colorCustomizations": {
+        "terminal.foreground" : "#FFFFFF",
+        "terminal.background" : "#1E1E1E",
+        "terminal.selectionBackground" : "#EFEFEF",
+        "terminal.selectionForeground" : "#1E1E1E",
+        "terminalCursor.background" : "#D41919",
+        "terminal.ansiBlack" : "#232323",
+        "terminal.ansiBlue" : "#008DF8",
+        "terminal.ansiBrightBlack" : "#444444",
+        "terminal.ansiBrightBlue" : "#0092FF",
+        "terminal.ansiBrightCyan" : "#67FFF0",
+        "terminal.ansiBrightGreen" : "#9AFF87",
+        "terminal.ansiBrightMagenta" : "#FF2740",
+        "terminal.ansiBrightRed" : "#FF2740",
+        "terminal.ansiBrightWhite" : "#FFFFFF",
+        "terminal.ansiBrightYellow" : "#FFD242",
+        "terminal.ansiCyan" : "#00D8EB",
+        "terminal.ansiGreen" : "#1A921C",
+        "terminal.ansiMagenta" : "#FF000F",
+        "terminal.ansiRed" : "#FF000F",
+        "terminal.ansiWhite" : "#FFFFFF",
+        "terminal.ansiYellow" : "#FFB900"
+    },
+}
