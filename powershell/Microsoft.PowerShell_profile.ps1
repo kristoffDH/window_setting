@@ -1,27 +1,21 @@
-
 # oh-my-posh module
 oh-my-posh init pwsh --config ~/.mytheme.omp.json | Invoke-Expression
 
 # setting env path
-# $Env:python_module = "C:$env:HOMEPATH\python_module"
-# $Env:Path += ";$Env:python_module;"
 
 # Alias 
-Remove-Item Alias:/ls
 Set-Alias ls lsd
 Set-Alias vi vim
 
 # config path setting
-#$omp_config_file = "$env:HOMEPATH/.mytheme.omp.json"
-#$window_setting_backup = "$env:HOMEPATH/Desktop/window_setting"
+$omp_config_file = "$env:HOMEPATH/.mytheme.omp.json"
 $history_backup_file_path = "$env:APPDATA/Microsoft/Windows/PowerShell/PSReadLine"
 
-# PSReadLine
-# Set-PSReadLineOption -PredictionSource History
-# Set-PSReadLineOption -PredictionViewStyle ListView
 
+##########################################################################################
 # function list
-function ll {
+function ll # lsd -al
+{
     param (
         [string]$Path = (Get-Location)
     )
@@ -30,7 +24,8 @@ function ll {
     lsd -alg $Path
 }
 
-function lt {
+function lt # lsd -- tree
+{
     param (
         [string]$Path = (Get-Location)
     )
@@ -39,71 +34,49 @@ function lt {
     lsd --tree $Path
 }
 
-function Config {
+function Config # open powershell profile config-file via vscode
+{
     code $PROFILE.CurrentUserCurrentHost
 }
-function Config-lsd {
+function Config-lsd # open lsd config-file via vscode
+{
     code $env:APPDATA/lsd/config.yaml
 }
 
-function Config-omp {
+function Config-omp # open oh my posh config-file via vscode
+{
     code $env:HOMEPATH/.mytheme.omp.json
 }
 
-function rsa-pubkey {
+function rsa-pubkey # show ssh rsa-public key
+{
     cat $env:HOMEPATH/.ssh/id_rsa.pub
 }
 
-# function Update-posh {
-#     winget upgrade JanDeDobbeleer.OhMyPosh -s winget
-# }
-
-# function Update-lsd-config {
-#     $cur_path = pwd
-#     cd $window_setting_backup
-#     cp $env:APPDATA/lsd/config.yaml .
-#     git add .
-#     git commit -m "Update lsd config"
-#     git push
-#     cd $cur_path
-# }
-
-# function Update-ps-profile {
-#     $cur_path = pwd
-#     cd $window_setting_backup
-#     cp $PROFILE.CurrentUserCurrentHost "./powershell"
-#     git add .
-#     git commit -m "Update window setting"
-#     git push
-#     cd $cur_path
-# }
-
-# function Update-omp-config {
-#     $cur_path = pwd
-#     cd $window_setting_backup
-#     cp $omp_config_file "./powershell"
-#     git add .
-#     git commit -m "Update omp setting"
-#     git push
-#     cd $cur_path
-# }
-
-# function Open-win-backup {
-#     cd $window_setting_backup
-# }
-
-function Del-hist {
+function Del-hist # delete powershell history
+{
     rm "$history_backup_file_path/ConsoleHost_history.txt"
 }
 
-function Which {
+function Which # get binary path
+{
     param(
         [String] $command
     )
     Get-Command -Name $command -ErrorAction SilentlyContinue 
 }
 
-function path {
+function path # echo enc path
+{
     $env:Path.Split(";")
 }
 
+function fnc # get function list in $profile
+{
+    cat $PROFILE | Select-string -Pattern "^function*" -NoEmphasis
+}
+
+function down  # change directory downloads
+{ 
+    cd $Home/Downloads
+}
