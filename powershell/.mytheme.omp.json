@@ -27,7 +27,7 @@
             "fetch_status": true,
             "fetch_upstream_icon": true
           },
-          "template": " <#5f5f5f>On</> <white>git(</><#3fff78>{{ .HEAD }}</>{{ if .Working.Changed }} <#FF000F>{{ .Working.String }}</>{{ end }}<white>)</> ",
+          "template": " <#5f5f5f>On</> <white>git(</><#3fff78>{{ .HEAD }}</>{{ if .Working.Changed }} <#FF000F>{{ .Working.String }}</>{{ end }}<white>)</>",
           "type": "git",
           "style": "plain"
         }        
