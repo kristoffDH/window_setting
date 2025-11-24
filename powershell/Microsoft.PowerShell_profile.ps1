@@ -1,5 +1,6 @@
+
 # oh-my-posh module
-oh-my-posh init pwsh --config ~/.mytheme.omp.json | Invoke-Expression
+oh-my-posh init pwsh --config $HOME/.mytheme.omp.json | Invoke-Expression
 
 # setting env path
 
@@ -11,6 +12,15 @@ Set-Alias vi vim
 $omp_config_file = "$env:HOMEPATH/.mytheme.omp.json"
 $history_backup_file_path = "$env:APPDATA/Microsoft/Windows/PowerShell/PSReadLine"
 
+# PSReadLine
+Set-PSReadLineOption -PredictionSource History
+Set-PSReadLineOption -PredictionViewStyle ListView
+
+Invoke-Expression (& { (zoxide init powershell | Out-String) })
+
+Set-Alias zz zi
+
+$env:OMP_TAG = "IP : 10.10.70.52"
 
 ##########################################################################################
 # function list
@@ -34,16 +44,16 @@ function lt # lsd -- tree
     lsd --tree $Path
 }
 
-function Config # open powershell profile config-file via vscode
+function config # open powershell profile config-file via vscode
 {
     code $PROFILE.CurrentUserCurrentHost
 }
-function Config-lsd # open lsd config-file via vscode
+function config-lsd # open lsd config-file via vscode
 {
     code $env:APPDATA/lsd/config.yaml
 }
 
-function Config-omp # open oh my posh config-file via vscode
+function config-omp # open oh my posh config-file via vscode
 {
     code $env:HOMEPATH/.mytheme.omp.json
 }
@@ -53,12 +63,22 @@ function rsa-pubkey # show ssh rsa-public key
     cat $env:HOMEPATH/.ssh/id_rsa.pub
 }
 
-function Del-hist # delete powershell history
+function code-hist # open powershell history 
+{
+    code "$history_backup_file_path/ConsoleHost_history.txt"
+}
+
+function del-hist # delete powershell history
 {
     rm "$history_backup_file_path/ConsoleHost_history.txt"
 }
 
-function Which # get binary path
+function open-hist
+{
+    code "$history_backup_file_path/ConsoleHost_history.txt"
+}
+
+function which # get binary path
 {
     param(
         [String] $command
@@ -80,3 +100,19 @@ function down  # change directory downloads
 { 
     cd $Home/Downloads
 }
+
+function ssh-config
+{
+    code $Home/.ssh/config
+}
+
+function layout-config
+{
+    code C:/hanssak/powershell_script\ssh-layout
+}
+
+function reload {
+    oh-my-posh init pwsh --config "$HOME\.mytheme.omp.json" | Invoke-Expression
+}
+
+
