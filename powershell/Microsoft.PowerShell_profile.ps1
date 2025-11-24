@@ -17,7 +17,6 @@ Set-PSReadLineOption -PredictionSource History
 Set-PSReadLineOption -PredictionViewStyle ListView
 
 Invoke-Expression (& { (zoxide init powershell | Out-String) })
-Invoke-Expression -Command $(mcfly init powershell | out-string)
 
 Set-Alias zz zi
 
