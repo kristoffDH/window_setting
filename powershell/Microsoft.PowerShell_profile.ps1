@@ -20,7 +20,19 @@ Invoke-Expression (& { (zoxide init powershell | Out-String) })
 
 Set-Alias zz zi
 
+Set-PSReadLineOption -Colors @{ Parameter = 'Cyan' }
+Set-PSReadLineOption -Colors @{ Operator = 'Cyan' }
+
 $env:OMP_TAG = "IP : 10.10.70.52"
+
+$env:OMP_LINK1_PATH = "C:\Users\Hanssak"
+$env:OMP_LINK1_NAME = "Home"
+$env:OMP_LINK2_PATH = "C:\Users\Hanssak\Downloads"
+$env:OMP_LINK2_NAME = "Downloads"
+$env:OMP_LINK3_PATH = "C:\Users\Hanssak\Desktop"
+$env:OMP_LINK3_NAME = "Desktop"
+$env:OMP_LINK4_PATH = "C:\hanssak"
+$env:OMP_LINK4_NAME = "hanssak"
 
 ##########################################################################################
 # function list
