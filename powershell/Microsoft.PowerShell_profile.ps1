@@ -20,8 +20,8 @@ Invoke-Expression (& { (zoxide init powershell | Out-String) })
 
 Set-Alias zz zi
 
-Set-PSReadLineOption -Colors @{ Parameter = 'Cyan' }
-Set-PSReadLineOption -Colors @{ Operator = 'Cyan' }
+Set-PSReadLineOption -Colors @{ Parameter = '#7E8BA3' }
+Set-PSReadLineOption -Colors @{ Operator = '#7E8BA3' }
 
 $env:OMP_TAG = "IP : 10.10.70.52"
 
