@@ -36,12 +36,27 @@
             "id": "User.moveFocus.F747588A"
         },
         {
+            "command": "paste",
+            "id": "User.paste"
+        },
+        {
             "command": 
             {
-                "action": "switchToTab",
-                "index": 0
+                "action": "newTab"
             },
-            "id": "User.switchToTab.D3F0B923"
+            "id": "User.newTab.5DEADB41"
+        },
+        {
+            "command": "toggleBroadcastInput",
+            "id": "User.toggleBroadcastInput"
+        },
+        {
+            "command": 
+            {
+                "action": "moveFocus",
+                "direction": "right"
+            },
+            "id": "User.moveFocus.87C324ED"
         },
         {
             "command": 
@@ -54,25 +69,10 @@
         {
             "command": 
             {
-                "action": "moveFocus",
-                "direction": "right"
+                "action": "switchToTab",
+                "index": 0
             },
-            "id": "User.moveFocus.87C324ED"
-        },
-        {
-            "command": "toggleBroadcastInput",
-            "id": "User.toggleBroadcastInput"
-        },
-        {
-            "command": "paste",
-            "id": "User.paste"
-        },
-        {
-            "command": 
-            {
-                "action": "newTab"
-            },
-            "id": "User.newTab.5DEADB41"
+            "id": "User.switchToTab.D3F0B923"
         },
         {
             "command": 
@@ -92,19 +92,19 @@
         {
             "command": 
             {
+                "action": "moveFocus",
+                "direction": "up"
+            },
+            "id": "User.moveFocus.6CD791B"
+        },
+        {
+            "command": 
+            {
                 "action": "splitPane",
                 "split": "down",
                 "splitMode": "duplicate"
             },
             "id": "User.splitPane.10B260D2"
-        },
-        {
-            "command": 
-            {
-                "action": "moveFocus",
-                "direction": "up"
-            },
-            "id": "User.moveFocus.6CD791B"
         },
         {
             "command": 
@@ -119,17 +119,17 @@
             "command": 
             {
                 "action": "switchToTab",
-                "index": 2
+                "index": 5
             },
-            "id": "User.switchToTab.87C324ED"
+            "id": "User.switchToTab.75247157"
         },
         {
             "command": 
             {
                 "action": "switchToTab",
-                "index": 5
+                "index": 2
             },
-            "id": "User.switchToTab.75247157"
+            "id": "User.switchToTab.87C324ED"
         },
         {
             "command": 
@@ -161,18 +161,18 @@
         {
             "command": 
             {
-                "action": "moveFocus",
-                "direction": "left"
-            },
-            "id": "User.moveFocus.2A0DA8E0"
-        },
-        {
-            "command": 
-            {
                 "action": "resizePane",
                 "direction": "down"
             },
             "id": "User.resizePane.F747588A"
+        },
+        {
+            "command": 
+            {
+                "action": "moveFocus",
+                "direction": "left"
+            },
+            "id": "User.moveFocus.2A0DA8E0"
         },
         {
             "command": 
@@ -218,12 +218,12 @@
             "keys": "ctrl+shift+up"
         },
         {
-            "id": "User.commandPalette.D3F0B923",
-            "keys": "f1"
-        },
-        {
             "id": "User.moveFocus.F747588A",
             "keys": "alt+down"
+        },
+        {
+            "id": "User.commandPalette.D3F0B923",
+            "keys": "f1"
         },
         {
             "id": "User.newTab.5DEADB41",
@@ -234,12 +234,12 @@
             "keys": "ctrl+5"
         },
         {
-            "id": "User.switchToTab.75247157",
-            "keys": "ctrl+6"
-        },
-        {
             "id": null,
             "keys": "alt+shift+left"
+        },
+        {
+            "id": "User.switchToTab.75247157",
+            "keys": "ctrl+6"
         },
         {
             "id": null,
@@ -247,7 +247,7 @@
         },
         {
             "id": "User.togglePaneZoom",
-            "keys": "alt+shift+enter"
+            "keys": "ctrl+enter"
         },
         {
             "id": null,
@@ -359,7 +359,7 @@
         },
         {
             "id": "User.toggleBroadcastInput",
-            "keys": "ctrl+alt+a"
+            "keys": "ctrl+a"
         },
         {
             "id": null,
@@ -402,11 +402,11 @@
             "experimental.retroTerminalEffect": false,
             "font": 
             {
-                "face": "MesloLGS NF",
+                "face": "MesloLGS Nerd Font",
                 "size": 10,
                 "weight": "medium"
             },
-            "historySize": 50000,
+            "historySize": 100000,
             "opacity": 100,
             "padding": "10",
             "scrollbarState": "hidden",
@@ -439,6 +439,7 @@
                 "experimental.retroTerminalEffect": false,
                 "font": 
                 {
+                    "face": "MesloLGS Nerd Font",
                     "size": 10,
                     "weight": "medium"
                 },
@@ -453,11 +454,18 @@
                 "useAcrylic": false
             },
             {
+                "font": 
+                {
+                    "face": "MesloLGS Nerd Font"
+                },
                 "guid": "{0caa0dad-35be-5f56-a8ff-afceeeaa6101}",
                 "hidden": false,
-                "name": "Command Prompt"
+                "name": "Command Prompt",
+                "opacity": 100,
+                "useAcrylic": false
             },
             {
+                "cursorColor": "#FF000F",
                 "font": 
                 {
                     "face": "MesloLGS Nerd Font",
@@ -466,7 +474,7 @@
                 "guid": "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
                 "hidden": false,
                 "name": "PowerShell",
-                "opacity": 100,
+                "opacity": 90,
                 "source": "Windows.Terminal.PowershellCore",
                 "useAcrylic": true
             },
