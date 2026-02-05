@@ -7,6 +7,7 @@ oh-my-posh init pwsh --config $HOME/.mytheme.omp.json | Invoke-Expression
 # Alias 
 Set-Alias ls lsd
 Set-Alias vi vim
+Set-Alias grep findstr
 
 # config path setting
 $omp_config_file = "$env:HOMEPATH/.mytheme.omp.json"
@@ -33,6 +34,9 @@ $env:OMP_LINK3_PATH = "C:\Users\Hanssak\Desktop"
 $env:OMP_LINK3_NAME = "Desktop"
 $env:OMP_LINK4_PATH = "C:\hanssak"
 $env:OMP_LINK4_NAME = "hanssak"
+$env:OMP_LINK5_PATH = "Z:\주간보고\CORE센터_CORE플랫폼팀\2026년\김대호"
+$env:OMP_LINK5_NAME = "주간보고"
+
 
 ##########################################################################################
 # function list
@@ -75,17 +79,12 @@ function rsa-pubkey # show ssh rsa-public key
     cat $env:HOMEPATH/.ssh/id_rsa.pub
 }
 
-function code-hist # open powershell history 
-{
-    code "$history_backup_file_path/ConsoleHost_history.txt"
-}
-
-function del-hist # delete powershell history
+function del-his # delete powershell history
 {
     rm "$history_backup_file_path/ConsoleHost_history.txt"
 }
 
-function open-hist
+function open-his
 {
     code "$history_backup_file_path/ConsoleHost_history.txt"
 }
@@ -286,3 +285,11 @@ function Show-MyPalette {
 
     Write-Host "$esc[0m"
 }
+
+function del-host {
+    param(
+        [String] $host_ip
+    )
+    ssh-keygen -R $host_ip
+}
+
