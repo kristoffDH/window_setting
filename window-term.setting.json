@@ -77,6 +77,14 @@
         {
             "id": "User.toggleBroadcastInput",
             "keys": "ctrl+a"
+        },
+        {
+            "id": "Terminal.PasteFromClipboard",
+            "keys": "ctrl+v"
+        },
+        {
+            "id": null,
+            "keys": "ctrl+shift+v"
         }
     ],
     "newTabMenu": 
