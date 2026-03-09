@@ -4,199 +4,16 @@
     "actions": 
     [
         {
-            "command": 
-            {
-                "action": "switchToTab",
-                "index": 3
-            },
-            "id": "User.switchToTab.6CD791B"
+            "command": "togglePaneZoom",
+            "id": "User.togglePaneZoom"
         },
         {
-            "command": 
-            {
-                "action": "resizePane",
-                "direction": "up"
-            },
-            "id": "User.resizePane.6CD791B"
-        },
-        {
-            "command": 
-            {
-                "action": "resizePane",
-                "direction": "left"
-            },
-            "id": "User.resizePane.2A0DA8E0"
-        },
-        {
-            "command": 
-            {
-                "action": "moveFocus",
-                "direction": "down"
-            },
-            "id": "User.moveFocus.F747588A"
-        },
-        {
-            "command": "paste",
-            "id": "User.paste"
-        },
-        {
-            "command": 
-            {
-                "action": "newTab"
-            },
-            "id": "User.newTab.5DEADB41"
+            "command": "toggleReadOnlyMode",
+            "id": "User.toggleReadOnlyMode"
         },
         {
             "command": "toggleBroadcastInput",
             "id": "User.toggleBroadcastInput"
-        },
-        {
-            "command": 
-            {
-                "action": "moveFocus",
-                "direction": "right"
-            },
-            "id": "User.moveFocus.87C324ED"
-        },
-        {
-            "command": 
-            {
-                "action": "switchToTab",
-                "index": 1
-            },
-            "id": "User.switchToTab.2A0DA8E0"
-        },
-        {
-            "command": 
-            {
-                "action": "switchToTab",
-                "index": 0
-            },
-            "id": "User.switchToTab.D3F0B923"
-        },
-        {
-            "command": 
-            {
-                "action": "commandPalette"
-            },
-            "id": "User.commandPalette.D3F0B923"
-        },
-        {
-            "command": 
-            {
-                "action": "switchToTab",
-                "index": 7
-            },
-            "id": "User.switchToTab.D7681B66"
-        },
-        {
-            "command": 
-            {
-                "action": "moveFocus",
-                "direction": "up"
-            },
-            "id": "User.moveFocus.6CD791B"
-        },
-        {
-            "command": 
-            {
-                "action": "splitPane",
-                "split": "down",
-                "splitMode": "duplicate"
-            },
-            "id": "User.splitPane.10B260D2"
-        },
-        {
-            "command": 
-            {
-                "action": "splitPane",
-                "split": "right",
-                "splitMode": "duplicate"
-            },
-            "id": "User.splitPane.FEF0D40B"
-        },
-        {
-            "command": 
-            {
-                "action": "switchToTab",
-                "index": 5
-            },
-            "id": "User.switchToTab.75247157"
-        },
-        {
-            "command": 
-            {
-                "action": "switchToTab",
-                "index": 2
-            },
-            "id": "User.switchToTab.87C324ED"
-        },
-        {
-            "command": 
-            {
-                "action": "resizePane",
-                "direction": "right"
-            },
-            "id": "User.resizePane.87C324ED"
-        },
-        {
-            "command": 
-            {
-                "action": "copy",
-                "singleLine": false
-            },
-            "id": "User.copy.644BA8F2"
-        },
-        {
-            "command": "find",
-            "id": "User.find"
-        },
-        {
-            "command": 
-            {
-                "action": "closeTab"
-            },
-            "id": "User.closeTab.0"
-        },
-        {
-            "command": 
-            {
-                "action": "resizePane",
-                "direction": "down"
-            },
-            "id": "User.resizePane.F747588A"
-        },
-        {
-            "command": 
-            {
-                "action": "moveFocus",
-                "direction": "left"
-            },
-            "id": "User.moveFocus.2A0DA8E0"
-        },
-        {
-            "command": 
-            {
-                "action": "switchToTab",
-                "index": 6
-            },
-            "id": "User.switchToTab.787314EB"
-        },
-        {
-            "command": "closePane",
-            "id": "User.closePane"
-        },
-        {
-            "command": 
-            {
-                "action": "switchToTab",
-                "index": 4
-            },
-            "id": "User.switchToTab.F747588A"
-        },
-        {
-            "command": "togglePaneZoom",
-            "id": "User.togglePaneZoom"
         }
     ],
     "copyFormatting": "none",
@@ -210,176 +27,56 @@
     "keybindings": 
     [
         {
-            "id": "User.switchToTab.6CD791B",
-            "keys": "ctrl+4"
-        },
-        {
-            "id": "User.resizePane.6CD791B",
-            "keys": "ctrl+shift+up"
-        },
-        {
-            "id": "User.moveFocus.F747588A",
-            "keys": "alt+down"
-        },
-        {
-            "id": "User.commandPalette.D3F0B923",
-            "keys": "f1"
-        },
-        {
-            "id": "User.newTab.5DEADB41",
+            "id": "Terminal.OpenNewTab",
             "keys": "ctrl+t"
         },
         {
-            "id": "User.switchToTab.F747588A",
-            "keys": "ctrl+5"
+            "id": null,
+            "keys": "alt+shift+minus"
         },
         {
             "id": null,
-            "keys": "alt+shift+left"
-        },
-        {
-            "id": "User.switchToTab.75247157",
-            "keys": "ctrl+6"
+            "keys": "ctrl+shift+t"
         },
         {
             "id": null,
-            "keys": "ctrl+alt+1"
+            "keys": "alt+shift+plus"
         },
         {
-            "id": "User.togglePaneZoom",
-            "keys": "ctrl+enter"
-        },
-        {
-            "id": null,
-            "keys": "ctrl+alt+2"
-        },
-        {
-            "id": "User.splitPane.FEF0D40B",
-            "keys": "ctrl+shift+e"
-        },
-        {
-            "id": null,
-            "keys": "ctrl+alt+3"
-        },
-        {
-            "id": null,
-            "keys": "ctrl+alt+7"
-        },
-        {
-            "id": null,
-            "keys": "ctrl+alt+4"
-        },
-        {
-            "id": null,
-            "keys": "alt+shift+right"
-        },
-        {
-            "id": null,
-            "keys": "ctrl+alt+5"
-        },
-        {
-            "id": "User.switchToTab.2A0DA8E0",
-            "keys": "ctrl+2"
-        },
-        {
-            "id": null,
-            "keys": "ctrl+alt+6"
-        },
-        {
-            "id": "User.splitPane.10B260D2",
-            "keys": "ctrl+shift+o"
-        },
-        {
-            "id": null,
-            "keys": "ctrl+alt+8"
-        },
-        {
-            "id": "User.resizePane.87C324ED",
-            "keys": "ctrl+shift+right"
-        },
-        {
-            "id": "User.switchToTab.D7681B66",
-            "keys": "ctrl+8"
-        },
-        {
-            "id": null,
-            "keys": "ctrl+shift+p"
-        },
-        {
-            "id": "User.moveFocus.87C324ED",
-            "keys": "alt+right"
-        },
-        {
-            "id": null,
-            "keys": "ctrl+f"
-        },
-        {
-            "id": "User.switchToTab.D3F0B923",
-            "keys": "ctrl+1"
-        },
-        {
-            "id": "User.switchToTab.87C324ED",
-            "keys": "ctrl+3"
-        },
-        {
-            "id": "User.paste",
-            "keys": "ctrl+v"
-        },
-        {
-            "id": "User.copy.644BA8F2",
-            "keys": "ctrl+c"
-        },
-        {
-            "id": "User.moveFocus.6CD791B",
-            "keys": "alt+up"
-        },
-        {
-            "id": "User.resizePane.2A0DA8E0",
-            "keys": "ctrl+shift+left"
-        },
-        {
-            "id": "User.closeTab.0",
-            "keys": "ctrl+q"
-        },
-        {
-            "id": "User.moveFocus.2A0DA8E0",
-            "keys": "alt+left"
-        },
-        {
-            "id": "User.switchToTab.787314EB",
-            "keys": "ctrl+7"
-        },
-        {
-            "id": "User.resizePane.F747588A",
-            "keys": "ctrl+shift+down"
-        },
-        {
-            "id": "User.closePane",
+            "id": "Terminal.ClosePane",
             "keys": "ctrl+w"
         },
         {
-            "id": "User.toggleBroadcastInput",
-            "keys": "ctrl+a"
+            "id": null,
+            "keys": "ctrl+shift+w"
         },
         {
-            "id": null,
-            "keys": "alt+shift+up"
+            "id": "Terminal.DuplicatePaneDown",
+            "keys": "ctrl+shift+minus"
         },
         {
-            "id": null,
-            "keys": "alt+shift+down"
+            "id": "Terminal.DuplicatePaneRight",
+            "keys": "ctrl+shift+plus"
+        },
+        {
+            "id": "Terminal.ToggleFullscreen",
+            "keys": "alt+enter"
+        },
+        {
+            "id": "Terminal.ToggleFullscreen",
+            "keys": "f11"
         },
         {
             "id": null,
             "keys": "enter"
         },
         {
-            "id": null,
-            "keys": "ctrl+insert"
+            "id": "User.togglePaneZoom",
+            "keys": "ctrl+enter"
         },
         {
-            "id": null,
-            "keys": "shift+insert"
+            "id": "User.toggleBroadcastInput",
+            "keys": "ctrl+a"
         }
     ],
     "newTabMenu": 
@@ -395,10 +92,8 @@
             "antialiasingMode": "grayscale",
             "bellStyle": "none",
             "colorScheme": "Flat Remix",
-            "compatibility.allowOSC52": false,
             "cursorHeight": 30,
             "cursorShape": "filledBox",
-            "experimental.repositionCursorWithMouse": false,
             "experimental.retroTerminalEffect": false,
             "font": 
             {
@@ -477,12 +172,6 @@
                 "opacity": 90,
                 "source": "Windows.Terminal.PowershellCore",
                 "useAcrylic": true
-            },
-            {
-                "guid": "{492436e6-7086-518c-a36e-820234a69078}",
-                "hidden": false,
-                "name": "Developer Command Prompt for VS 2022",
-                "source": "Windows.Terminal.VisualStudio"
             }
         ]
     },
