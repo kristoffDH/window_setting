@@ -32,14 +32,15 @@ $env:OMP_LINK2_PATH = "C:\Users\Hanssak\Downloads"
 $env:OMP_LINK2_NAME = "Downloads"
 $env:OMP_LINK3_PATH = "C:\Users\Hanssak\Desktop"
 $env:OMP_LINK3_NAME = "Desktop"
-$env:OMP_LINK4_PATH = "C:\hanssak"
-$env:OMP_LINK4_NAME = "hanssak"
+$env:OMP_LINK4_PATH = "C:\CorePlatform"
+$env:OMP_LINK4_NAME = "CorePlatform"
 $env:OMP_LINK5_PATH = "Z:\주간보고\CORE센터_CORE플랫폼팀\2026년\김대호"
 $env:OMP_LINK5_NAME = "주간보고"
 
+#############################################################################
+# function
+#############################################################################
 
-##########################################################################################
-# function list
 function ll # lsd -al
 {
     param (
@@ -79,11 +80,6 @@ function rsa-pubkey # show ssh rsa-public key
     cat $env:HOMEPATH/.ssh/id_rsa.pub
 }
 
-function del-his # delete powershell history
-{
-    rm "$history_backup_file_path/ConsoleHost_history.txt"
-}
-
 function open-his
 {
     code "$history_backup_file_path/ConsoleHost_history.txt"
@@ -102,11 +98,6 @@ function path # echo enc path
     $env:Path.Split(";")
 }
 
-function fnc # get function list in $profile
-{
-    cat $PROFILE | Select-string -Pattern "^function*" -NoEmphasis
-}
-
 function down  # change directory downloads
 { 
     cd $Home/Downloads
@@ -117,15 +108,9 @@ function ssh-config
     code $Home/.ssh/config
 }
 
-function layout-config
-{
-    code C:/hanssak/powershell_script\ssh-layout
-}
-
 function reload {
     oh-my-posh init pwsh --config "$HOME\.mytheme.omp.json" | Invoke-Expression
 }
-
 
 ############################################################################################
 
@@ -133,6 +118,7 @@ function Show-MyPalette {
     $esc = [char]27
 
     function Convert-HexToRgb {
+        # fnc-ignore
         param([string]$Hex)
         $h = $Hex.Trim()
         if ($h.StartsWith('#')) { $h = $h.Substring(1) }
@@ -143,11 +129,13 @@ function Show-MyPalette {
     }
 
     function Convert-RgbToHex {
+        # fnc-ignore
         param([int]$R, [int]$G, [int]$B)
         return ('#{0:X2}{1:X2}{2:X2}' -f $R,$G,$B)
     }
 
     function New-Tone {
+        # fnc-ignore
         param(
             [string]$Hex,
             [double]$Factor,
@@ -165,6 +153,7 @@ function Show-MyPalette {
     }
 
     function Show-ColorRow {
+        # fnc-ignore
         param(
             [string]$Title,
             [array]$Colors
@@ -286,10 +275,467 @@ function Show-MyPalette {
     Write-Host "$esc[0m"
 }
 
-function del-host {
-    param(
-        [String] $host_ip
+function fnc {
+    $tokens = $null
+    $errors = $null
+
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+        $PROFILE,
+        [ref]$tokens,
+        [ref]$errors
     )
-    ssh-keygen -R $host_ip
+
+    if ($errors.Count -gt 0) {
+        Write-Error "PROFILE 파싱 중 오류가 발생했습니다."
+        return
+    }
+
+    $functions = $ast.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
+    }, $true)
+
+    $names = foreach ($func in $functions) {
+        $start = $func.Extent.StartOffset
+        $end   = $func.Extent.EndOffset
+
+        $hasIgnore = $tokens | Where-Object {
+            $_.Kind -eq [System.Management.Automation.Language.TokenKind]::Comment -and
+            $_.Extent.StartOffset -ge $start -and
+            $_.Extent.EndOffset -le $end -and
+            $_.Text -match '(?i)#\s*fnc-ignore\b'
+        } | Select-Object -First 1
+
+        if (-not $hasIgnore) {
+            $func.Name
+        }
+    }
+
+    $names = $names | Sort-Object -Unique
+
+    if (-not $names) {
+        Write-Host "표시할 함수가 없습니다."
+        return
+    }
+
+    Write-Host ("Functions in PROFILE ({0})" -f $names.Count) -ForegroundColor Cyan
+    Write-Host ""
+
+    $index = 1
+    foreach ($name in $names) {
+        Write-Host ("{0,2}. {1}" -f $index, $name)
+        $index++
+    }
 }
 
+$script:SshPickerDetailCache = @{}
+
+function Expand-UserPath {
+    # fnc-ignore
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if ($Path -eq '~') {
+        return $HOME
+    }
+
+    if ($Path.StartsWith('~/') -or $Path.StartsWith('~\')) {
+        return Join-Path $HOME $Path.Substring(2)
+    }
+
+    return $Path
+}
+
+function Split-SshTokens {
+    # fnc-ignore
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Text
+    )
+
+    $result = New-Object System.Collections.Generic.List[string]
+    $matches = [regex]::Matches($Text, '("(?:[^"\\]|\\.)*"|''(?:[^''\\]|\\.)*''|\S+)')
+
+    foreach ($m in $matches) {
+        $value = $m.Value.Trim()
+
+        if (
+            ($value.StartsWith('"') -and $value.EndsWith('"')) -or
+            ($value.StartsWith("'") -and $value.EndsWith("'"))
+        ) {
+            if ($value.Length -ge 2) {
+                $value = $value.Substring(1, $value.Length - 2)
+            }
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+            [void]$result.Add($value)
+        }
+    }
+
+    return $result
+}
+
+function Get-SshAliasesFromConfigFile {
+    # fnc-ignore
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Visited
+    )
+
+    $items = New-Object System.Collections.Generic.List[object]
+
+    $expanded = Expand-UserPath $Path
+    try {
+        $resolved = [System.IO.Path]::GetFullPath($expanded)
+    }
+    catch {
+        $resolved = $expanded
+    }
+
+    if ($Visited.ContainsKey($resolved)) {
+        return $items
+    }
+
+    $Visited[$resolved] = $true
+
+    if (-not (Test-Path -LiteralPath $resolved)) {
+        return $items
+    }
+
+    $dir = Split-Path -Parent $resolved
+    $lines = [System.IO.File]::ReadAllLines($resolved)
+
+    foreach ($line in $lines) {
+        $trim = $line.Trim()
+
+        if ([string]::IsNullOrWhiteSpace($trim)) {
+            continue
+        }
+
+        if ($trim.StartsWith('#')) {
+            continue
+        }
+
+        if ($trim -match '^(?i)include\s+(.+)$') {
+            $patterns = Split-SshTokens $matches[1]
+
+            foreach ($pattern in $patterns) {
+                $includePath = Expand-UserPath $pattern
+
+                if (-not [System.IO.Path]::IsPathRooted($includePath)) {
+                    $includePath = Join-Path $dir $includePath
+                }
+
+                $matchedFiles = Get-ChildItem -Path $includePath -File -ErrorAction SilentlyContinue
+                foreach ($file in $matchedFiles) {
+                    $childItems = Get-SshAliasesFromConfigFile -Path $file.FullName -Visited $Visited
+                    foreach ($child in $childItems) {
+                        [void]$items.Add($child)
+                    }
+                }
+            }
+
+            continue
+        }
+
+        if ($trim -match '^(?i)host\s+(.+)$') {
+            $tokens = Split-SshTokens $matches[1]
+
+            foreach ($token in $tokens) {
+                if ($token.StartsWith('!')) {
+                    continue
+                }
+
+                if ($token.IndexOfAny([char[]]'*?') -ge 0) {
+                    continue
+                }
+
+                [void]$items.Add([pscustomobject]@{
+                    Alias  = $token
+                    Source = $resolved
+                })
+            }
+        }
+    }
+
+    return $items
+}
+
+function Get-SshMapValue {
+    # fnc-ignore
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Map,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Key,
+
+        [string]$Default = ''
+    )
+
+    if (-not $Map.ContainsKey($Key)) {
+        return $Default
+    }
+
+    $value = $Map[$Key]
+
+    if ($value -is [System.Array]) {
+        return ($value -join ', ')
+    }
+
+    return [string]$value
+}
+
+function Resolve-HostToIp {
+    # fnc-ignore
+    param(
+        [string]$HostName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($HostName)) {
+        return ''
+    }
+
+    $parsed = $null
+    if ([System.Net.IPAddress]::TryParse($HostName, [ref]$parsed)) {
+        return $parsed.IPAddressToString
+    }
+
+    try {
+        $addresses = [System.Net.Dns]::GetHostAddresses($HostName)
+
+        $ipv4 = $addresses | Where-Object {
+            $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork
+        }
+
+        if ($ipv4 -and $ipv4.Count -gt 0) {
+            return $ipv4[0].IPAddressToString
+        }
+
+        if ($addresses -and $addresses.Count -gt 0) {
+            return $addresses[0].IPAddressToString
+        }
+    }
+    catch {
+    }
+
+    return ''
+}
+
+function Get-SshEffectiveConfig {
+    # fnc-ignore
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Alias
+    )
+
+    $output = & ssh -G $Alias 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $output) {
+        return [pscustomobject]@{
+            Alias        = $Alias
+            HostName     = $Alias
+            IP           = ''
+            Port         = '22'
+            User         = ''
+            IdentityFile = ''
+            ProxyJump    = ''
+        }
+    }
+
+    $map = @{}
+
+    foreach ($line in $output) {
+        if ($line -match '^\s*(\S+)\s+(.*)\s*$') {
+            $key = $matches[1].ToLowerInvariant()
+            $val = $matches[2].Trim()
+
+            if ($map.ContainsKey($key)) {
+                if ($map[$key] -is [System.Array]) {
+                    $map[$key] += $val
+                }
+                else {
+                    $map[$key] = @($map[$key], $val)
+                }
+            }
+            else {
+                $map[$key] = $val
+            }
+        }
+    }
+
+    $hostName = Get-SshMapValue -Map $map -Key 'hostname' -Default $Alias
+    $port = Get-SshMapValue -Map $map -Key 'port' -Default '22'
+    $user = Get-SshMapValue -Map $map -Key 'user' -Default ''
+    $identityFile = Get-SshMapValue -Map $map -Key 'identityfile' -Default ''
+    $proxyJump = Get-SshMapValue -Map $map -Key 'proxyjump' -Default ''
+    $ip = Resolve-HostToIp $hostName
+
+    return [pscustomobject]@{
+        Alias        = $Alias
+        HostName     = $hostName
+        IP           = $ip
+        Port         = $port
+        User         = $user
+        IdentityFile = $identityFile
+        ProxyJump    = $proxyJump
+    }
+}
+
+function Get-SshDetailCached {
+    # fnc-ignore
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Alias
+    )
+
+    $key = $Alias.ToLowerInvariant()
+
+    if (-not $script:SshPickerDetailCache.ContainsKey($key)) {
+        $script:SshPickerDetailCache[$key] = Get-SshEffectiveConfig -Alias $Alias
+    }
+
+    return $script:SshPickerDetailCache[$key]
+}
+
+function Render-SshPicker {
+    # fnc-ignore
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$Entries,
+
+        [Parameter(Mandatory = $true)]
+        [int]$Index
+    )
+
+    $detail = Get-SshDetailCached -Alias $Entries[$Index].Alias
+    $total = $Entries.Count
+
+    [Console]::Clear()
+
+    Write-Host ("SSH Host Picker  [{0}/{1}]" -f ($Index + 1), $total) -ForegroundColor Cyan
+    Write-Host "↑/↓ 이동  Enter 선택  Esc 종료" -ForegroundColor DarkGray
+    Write-Host ""
+
+    $visibleCount = [Math]::Min(11, $total)
+    $half = [Math]::Floor($visibleCount / 2)
+
+    $start = [Math]::Max(0, $Index - $half)
+    $end = [Math]::Min($total - 1, $start + $visibleCount - 1)
+
+    if (($end - $start + 1) -lt $visibleCount) {
+        $start = [Math]::Max(0, $end - $visibleCount + 1)
+    }
+
+    for ($i = $start; $i -le $end; $i++) {
+        $item = $Entries[$i]
+        $prefix = if ($i -eq $Index) { '>' } else { ' ' }
+        $text = "{0} [{1,3}/{2}] {3}" -f $prefix, ($i + 1), $total, $item.Alias
+
+        if ($i -eq $Index) {
+            Write-Host $text -ForegroundColor Black -BackgroundColor DarkCyan
+        }
+        else {
+            Write-Host $text
+        }
+    }
+
+    Write-Host ""
+
+    $ipText = if ([string]::IsNullOrWhiteSpace($detail.IP)) { '<DNS 해석 실패>' } else { $detail.IP }
+
+    Write-Host "상세" -ForegroundColor Yellow
+    Write-Host ("  Alias        : {0}" -f $detail.Alias)
+    Write-Host ("  HostName     : {0}" -f $detail.HostName)
+    Write-Host ("  IP           : {0}" -f $ipText)
+    Write-Host ("  Port         : {0}" -f $detail.Port)
+    Write-Host ("  User         : {0}" -f $detail.User)
+    Write-Host ("  IdentityFile : {0}" -f $detail.IdentityFile)
+    Write-Host ("  ProxyJump    : {0}" -f $detail.ProxyJump)
+    Write-Host ("  Source       : {0}" -f $Entries[$Index].Source)
+}
+
+function Set-SshHost {
+    param(
+        [string]$ConfigPath = "$HOME/.ssh/config"
+    )
+
+    if (-not (Get-Command ssh -ErrorAction SilentlyContinue)) {
+        throw "ssh 명령을 찾지 못했습니다. OpenSSH Client가 설치되어 있어야 합니다."
+    }
+
+    $visited = @{}
+    $rawEntries = Get-SshAliasesFromConfigFile -Path $ConfigPath -Visited $visited
+
+    if (-not $rawEntries -or $rawEntries.Count -eq 0) {
+        throw "선택 가능한 Host 항목을 찾지 못했습니다. config 파일을 확인해 주세요."
+    }
+
+    $seen = @{}
+    $entries = New-Object System.Collections.Generic.List[object]
+
+    foreach ($entry in $rawEntries) {
+        $key = $entry.Alias.ToLowerInvariant()
+
+        if (-not $seen.ContainsKey($key)) {
+            $seen[$key] = $true
+            [void]$entries.Add($entry)
+        }
+    }
+
+    $index = 0
+
+    while ($true) {
+        Render-SshPicker -Entries $entries.ToArray() -Index $index
+
+        $keyInfo = [Console]::ReadKey($true)
+
+        switch ($keyInfo.Key) {
+            'UpArrow' {
+                if ($index -gt 0) {
+                    $index--
+                }
+            }
+
+            'DownArrow' {
+                if ($index -lt ($entries.Count - 1)) {
+                    $index++
+                }
+            }
+
+            'Enter' {
+                $selected = $entries[$index]
+                $detail = Get-SshDetailCached -Alias $selected.Alias
+
+                $global:SV = $selected.Alias
+                $global:SVIP = if ([string]::IsNullOrWhiteSpace($detail.IP)) { $detail.HostName } else { $detail.IP }
+                $global:SVPORT = [int]$detail.Port
+
+                Write-Host ""
+                Write-Host ("선택됨: {0}" -f $global:SV) -ForegroundColor Green
+                Write-Host ("`$SV     = {0}" -f $global:SV)
+                Write-Host ("`$SVIP   = {0}" -f $global:SVIP)
+                Write-Host ("`$SVPORT = {0}" -f $global:SVPORT)
+
+                return [pscustomobject]@{
+                    SV     = $global:SV
+                    SVIP   = $global:SVIP
+                    SVPORT = $global:SVPORT
+                }
+            }
+
+            'Escape' {
+                Write-Host ""
+                Write-Host "취소했습니다." -ForegroundColor DarkYellow
+                return $null
+            }
+        }
+    }
+}
+
+Set-Alias -Name svpick -Value Set-SshHost -Scope Global
