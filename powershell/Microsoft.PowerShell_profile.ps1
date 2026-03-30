@@ -648,22 +648,9 @@ function Set-SshSelectionVars {
     $global:SV = $Entry.Alias
     $global:SVIP = if ([string]::IsNullOrWhiteSpace($detail.IP)) { $detail.HostName } else { $detail.IP }
     $global:SVPORT = [int]$detail.Port
-
-    # OMP에서 읽을 현재 세션용 환경변수
     $env:OMP_SV = $global:SV
 
-    Write-Host ""
-    Write-Host ("선택됨: {0}" -f $global:SV) -ForegroundColor Green
-    Write-Host ("`$SV     = {0}" -f $global:SV)
-    Write-Host ("`$SVIP   = {0}" -f $global:SVIP)
-    Write-Host ("`$SVPORT = {0}" -f $global:SVPORT)
-    Write-Host ("`$env:OMP_SV = {0}" -f $env:OMP_SV)
-
-    [pscustomobject]@{
-        SV     = $global:SV
-        SVIP   = $global:SVIP
-        SVPORT = $global:SVPORT
-    }
+    Show-SshSelectedScreen -Entry $Entry
 }
 
 function clear-sv {
@@ -731,6 +718,38 @@ function Render-SshPicker {
     Write-Host ("  IdentityFile : {0}" -f $detail.IdentityFile)
     Write-Host ("  ProxyJump    : {0}" -f $detail.ProxyJump)
     Write-Host ("  Source       : {0}" -f $Entries[$Index].Source)
+}
+
+function Show-SshSelectedScreen {
+    # fnc-ignore
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Entry
+    )
+
+    $detail = Get-SshDetailCached -Alias $Entry.Alias
+
+    [Console]::Clear()
+
+    Write-Host "SSH Selected" -ForegroundColor Cyan
+    Write-Host ""
+
+    Write-Host "선택됨" -ForegroundColor Yellow
+    Write-Host ("  Alias        : {0}" -f $detail.Alias)
+    Write-Host ("  HostName     : {0}" -f $detail.HostName)
+    Write-Host ("  IP           : {0}" -f $(if ([string]::IsNullOrWhiteSpace($detail.IP)) { "<DNS 해석 실패>" } else { $detail.IP }))
+    Write-Host ("  Port         : {0}" -f $detail.Port)
+    Write-Host ("  User         : {0}" -f $detail.User)
+    Write-Host ("  IdentityFile : {0}" -f $detail.IdentityFile)
+    Write-Host ("  ProxyJump    : {0}" -f $detail.ProxyJump)
+    Write-Host ("  Source       : {0}" -f $Entry.Source)
+    Write-Host ""
+
+    if (-not [string]::IsNullOrWhiteSpace($env:OMP_SV)) {
+        Write-Host ("  `\$env:OMP_SV = {0}" -f $env:OMP_SV)
+    }
+
+    Write-Host ""
 }
 
 function Set-SshHost {
