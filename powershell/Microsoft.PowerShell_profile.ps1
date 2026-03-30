@@ -744,12 +744,6 @@ function Show-SshSelectedScreen {
     Write-Host ("  ProxyJump    : {0}" -f $detail.ProxyJump)
     Write-Host ("  Source       : {0}" -f $Entry.Source)
     Write-Host ""
-
-    if (-not [string]::IsNullOrWhiteSpace($env:OMP_SV)) {
-        Write-Host ("  `\$env:OMP_SV = {0}" -f $env:OMP_SV)
-    }
-
-    Write-Host ""
 }
 
 function Set-SshHost {
