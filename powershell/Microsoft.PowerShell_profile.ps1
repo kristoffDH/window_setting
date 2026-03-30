@@ -907,3 +907,47 @@ function del-host {
     Write-Host ("완전히 제거된 라인 수: {0}" -f $removedLineCount)
     Write-Host ("backup: {0}" -f $backup) -ForegroundColor DarkGray
 }
+
+function ssh-con {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Args
+    )
+
+    if (-not (Get-Command tssh -ErrorAction SilentlyContinue)) {
+        Write-Error "tssh 명령을 찾지 못했습니다."
+        return
+    }
+
+    if (-not (Get-Variable SV -Scope Global -ErrorAction SilentlyContinue) -or
+        [string]::IsNullOrWhiteSpace($global:SV)) {
+        Write-Host "SV가 설정되지 않았습니다. 먼저 set-sshhost를 실행해 주세요." -ForegroundColor Yellow
+        return
+    }
+
+    $configPath = "$HOME/.ssh/config"
+
+    if ((Test-Path -LiteralPath $configPath) -and
+        (Get-Command Get-SshAliasesFromConfigFile -ErrorAction SilentlyContinue)) {
+
+        $visited = @{}
+        $rawEntries = Get-SshAliasesFromConfigFile -Path $configPath -Visited $visited
+
+        $aliases = $rawEntries |
+            ForEach-Object { $_.Alias } |
+            Sort-Object -Unique
+
+        $matched = $aliases |
+            Where-Object { $_ -ieq $global:SV } |
+            Select-Object -First 1
+
+        if (-not $matched) {
+            Write-Host ("현재 SV '{0}' 는 ssh config에 정의되어 있지 않습니다." -f $global:SV) -ForegroundColor Yellow
+            Write-Host "먼저 set-sshhost를 다시 실행해 주세요." -ForegroundColor Yellow
+            return
+        }
+    }
+
+    Write-Host ("connecting: tssh {0}" -f $global:SV) -ForegroundColor Green
+    & tssh $global:SV @Args
+}
