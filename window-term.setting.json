@@ -14,7 +14,23 @@
         {
             "command": "toggleBroadcastInput",
             "id": "User.toggleBroadcastInput"
-        }
+        },
+           {
+                "id": "User.Split2x2",
+                "name": "Split current tab into 2x2",
+                "command":
+                {
+                "action": "multipleActions",
+                "actions":
+                [
+                    { "action": "splitPane", "split": "down" },
+                    { "action": "moveFocus", "direction": "up" },
+                    { "action": "splitPane", "split": "right" },
+                    { "action": "moveFocus", "direction": "down" },
+                    { "action": "splitPane", "split": "right" }
+                ]
+                }
+            }
     ],
     "copyFormatting": "none",
     "copyOnSelect": false,
@@ -26,6 +42,10 @@
     "initialRows": 40,
     "keybindings": 
     [
+        { 
+            "id": "User.Split2x2",
+            "keys": "ctrl+shift+8"
+        },
         {
             "id": "Terminal.OpenNewTab",
             "keys": "ctrl+t"
@@ -51,8 +71,24 @@
             "keys": "ctrl+shift+w"
         },
         {
+            "id": null,
+            "keys": "ctrl+alt+4"
+        },
+        {
+            "id": null,
+            "keys": "ctrl+alt+7"
+        },
+        {
             "id": "Terminal.DuplicatePaneDown",
             "keys": "ctrl+shift+minus"
+        },
+        {
+            "id": "Terminal.SwitchToTab5",
+            "keys": "ctrl+6"
+        },
+        {
+            "id": null,
+            "keys": "ctrl+alt+1"
         },
         {
             "id": "Terminal.DuplicatePaneRight",
@@ -84,7 +120,55 @@
         },
         {
             "id": null,
+            "keys": "ctrl+alt+8"
+        },
+        {
+            "id": null,
             "keys": "ctrl+shift+v"
+        },
+        {
+            "id": "Terminal.SwitchToTab0",
+            "keys": "ctrl+1"
+        },
+        {
+            "id": null,
+            "keys": "ctrl+alt+6"
+        },
+        {
+            "id": "Terminal.SwitchToTab1",
+            "keys": "ctrl+2"
+        },
+        {
+            "id": null,
+            "keys": "ctrl+alt+2"
+        },
+        {
+            "id": "Terminal.SwitchToTab2",
+            "keys": "ctrl+3"
+        },
+        {
+            "id": null,
+            "keys": "ctrl+alt+3"
+        },
+        {
+            "id": "Terminal.SwitchToTab3",
+            "keys": "ctrl+4"
+        },
+        {
+            "id": "Terminal.SwitchToTab4",
+            "keys": "ctrl+5"
+        },
+        {
+            "id": null,
+            "keys": "ctrl+alt+5"
+        },
+        {
+            "id": "Terminal.SwitchToTab6",
+            "keys": "ctrl+7"
+        },
+        {
+            "id": "Terminal.SwitchToTab7",
+            "keys": "ctrl+8"
         }
     ],
     "newTabMenu": 
@@ -118,6 +202,48 @@
         },
         "list": 
         [
+            {
+                "cursorColor": "#FF000F",
+                "font": 
+                {
+                    "face": "MesloLGS Nerd Font",
+                    "weight": "medium"
+                },
+                "guid": "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
+                "hidden": false,
+                "name": "PowerShell",
+                "opacity": 90,
+                "source": "Windows.Terminal.PowershellCore",
+                "useAcrylic": true
+            },
+            {
+                "commandline": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\"",
+                "cursorColor": "#FF000F",
+                "elevate": true,
+                "font": 
+                {
+                    "face": "MesloLGS Nerd Font",
+                    "weight": "medium"
+                },
+                "guid": "{5a9590ea-d5cb-43d7-a364-f1ee9f762ea8}",
+                "hidden": false,
+                "icon": "ms-appx:///ProfileIcons/pwsh.png",
+                "name": "PowerShell (admin)",
+                "opacity": 90,
+                "startingDirectory": "%USERPROFILE%",
+                "useAcrylic": true
+            },
+            {
+                "font": 
+                {
+                    "face": "MesloLGS Nerd Font"
+                },
+                "guid": "{0caa0dad-35be-5f56-a8ff-afceeeaa6101}",
+                "hidden": false,
+                "name": "Command Prompt",
+                "opacity": 100,
+                "useAcrylic": false
+            },
             {
                 "commandline": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
                 "experimental.retroTerminalEffect": false,
@@ -155,32 +281,7 @@
                 "snapOnInput": true,
                 "startingDirectory": "%USERPROFILE%",
                 "useAcrylic": false
-            },
-            {
-                "font": 
-                {
-                    "face": "MesloLGS Nerd Font"
-                },
-                "guid": "{0caa0dad-35be-5f56-a8ff-afceeeaa6101}",
-                "hidden": false,
-                "name": "Command Prompt",
-                "opacity": 100,
-                "useAcrylic": false
-            },
-            {
-                "cursorColor": "#FF000F",
-                "font": 
-                {
-                    "face": "MesloLGS Nerd Font",
-                    "weight": "medium"
-                },
-                "guid": "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
-                "hidden": false,
-                "name": "PowerShell",
-                "opacity": 90,
-                "source": "Windows.Terminal.PowershellCore",
-                "useAcrylic": true
-            }
+            }            
         ]
     },
     "schemes": 
