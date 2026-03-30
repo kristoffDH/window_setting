@@ -85,6 +85,39 @@ function open-his
     code "$history_backup_file_path/ConsoleHost_history.txt"
 }
 
+function del-his {
+    $path = "$history_backup_file_path/ConsoleHost_history.txt"
+
+    if (-not (Test-Path -LiteralPath $path)) {
+        Write-Host "history 파일이 없습니다."
+        return
+    }
+
+    $lines = Get-Content -LiteralPath $path
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+    $result = New-Object 'System.Collections.Generic.List[string]'
+
+    for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+        $line = $lines[$i]
+
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            continue
+        }
+
+        if ($seen.Add($line)) {
+            $result.Add($line)
+        }
+    }
+
+    [array]::Reverse($result)
+
+    Copy-Item -LiteralPath $path -Destination ($path + ".bak") -Force
+    Set-Content -LiteralPath $path -Value $result -Encoding utf8
+
+    Write-Host ("history 정리 완료: {0} -> {1}" -f $lines.Count, $result.Count) -ForegroundColor Green
+    Write-Host ("backup: {0}.bak" -f $path) -ForegroundColor DarkGray
+}
+
 function which # get binary path
 {
     param(
@@ -739,3 +772,94 @@ function Set-SshHost {
 }
 
 Set-Alias -Name svpick -Value Set-SshHost -Scope Global
+
+function del-host {
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$Ip
+    )
+
+    $knownHosts = Join-Path $HOME ".ssh\known_hosts"
+
+    if (-not (Test-Path -LiteralPath $knownHosts)) {
+        Write-Error ("known_hosts 파일이 없습니다: {0}" -f $knownHosts)
+        return
+    }
+
+    $backup = "{0}.{1}.bak" -f $knownHosts, (Get-Date -Format "yyyyMMddHHmmss")
+    Copy-Item -LiteralPath $knownHosts -Destination $backup -Force
+
+    $lines = @(Get-Content -LiteralPath $knownHosts)
+    $result = New-Object System.Collections.Generic.List[string]
+    $removedTokenCount = 0
+    $removedLineCount = 0
+
+    foreach ($line in $lines) {
+        if ([string]::IsNullOrWhiteSpace($line) -or $line.TrimStart().StartsWith('#')) {
+            $result.Add($line)
+            continue
+        }
+
+        if ($line -notmatch '^\s*(\S+)(.*)$') {
+            $result.Add($line)
+            continue
+        }
+
+        $hostField = $matches[1]
+        $rest = $matches[2]
+
+        if ($hostField.StartsWith('|1|') -or $hostField.StartsWith('|2|')) {
+            $result.Add($line)
+            continue
+        }
+
+        $hostEntries = $hostField -split ','
+        $keptHosts = New-Object System.Collections.Generic.List[string]
+
+        foreach ($entry in $hostEntries) {
+            $isMatch = $false
+
+            if ($entry -eq $Ip) {
+                $isMatch = $true
+            }
+            elseif ($entry -match '^\[(.+)\]:(\d+)$' -and $matches[1] -eq $Ip) {
+                $isMatch = $true
+            }
+
+            if ($isMatch) {
+                $removedTokenCount++
+            }
+            else {
+                $keptHosts.Add($entry)
+            }
+        }
+
+        if ($keptHosts.Count -eq 0) {
+            if ($hostEntries.Count -gt 0) {
+                $removedLineCount++
+            }
+            continue
+        }
+
+        if ($keptHosts.Count -ne $hostEntries.Count) {
+            $result.Add(($keptHosts -join ',') + $rest)
+        }
+        else {
+            $result.Add($line)
+        }
+    }
+
+    if ($removedTokenCount -eq 0) {
+        Write-Host ("삭제할 IP를 찾지 못했습니다: {0}" -f $Ip) -ForegroundColor Yellow
+        Write-Host ("backup: {0}" -f $backup) -ForegroundColor DarkGray
+        return
+    }
+
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllLines($knownHosts, $result, $utf8NoBom)
+
+    Write-Host ("삭제 완료: {0}" -f $Ip) -ForegroundColor Green
+    Write-Host ("삭제된 항목 수: {0}" -f $removedTokenCount)
+    Write-Host ("완전히 제거된 라인 수: {0}" -f $removedLineCount)
+    Write-Host ("backup: {0}" -f $backup) -ForegroundColor DarkGray
+}
