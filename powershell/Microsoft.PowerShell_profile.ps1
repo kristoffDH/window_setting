@@ -649,17 +649,31 @@ function Set-SshSelectionVars {
     $global:SVIP = if ([string]::IsNullOrWhiteSpace($detail.IP)) { $detail.HostName } else { $detail.IP }
     $global:SVPORT = [int]$detail.Port
 
+    # OMP에서 읽을 현재 세션용 환경변수
+    $env:OMP_SV = $global:SV
+
     Write-Host ""
     Write-Host ("선택됨: {0}" -f $global:SV) -ForegroundColor Green
     Write-Host ("`$SV     = {0}" -f $global:SV)
     Write-Host ("`$SVIP   = {0}" -f $global:SVIP)
     Write-Host ("`$SVPORT = {0}" -f $global:SVPORT)
+    Write-Host ("`$env:OMP_SV = {0}" -f $env:OMP_SV)
 
     [pscustomobject]@{
         SV     = $global:SV
         SVIP   = $global:SVIP
         SVPORT = $global:SVPORT
     }
+}
+
+function clear-sv {
+    # fnc-ignore
+    Remove-Variable SV -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable SVIP -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable SVPORT -Scope Global -ErrorAction SilentlyContinue
+    Remove-Item Env:OMP_SV -ErrorAction SilentlyContinue
+
+    Write-Host "SV 정보 제거 완료" -ForegroundColor Yellow
 }
 
 function Render-SshPicker {
