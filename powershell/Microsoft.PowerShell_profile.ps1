@@ -636,6 +636,32 @@ function Get-SshDetailCached {
     return $script:SshPickerDetailCache[$key]
 }
 
+function Set-SshSelectionVars {
+    # fnc-ignore
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Entry
+    )
+
+    $detail = Get-SshDetailCached -Alias $Entry.Alias
+
+    $global:SV = $Entry.Alias
+    $global:SVIP = if ([string]::IsNullOrWhiteSpace($detail.IP)) { $detail.HostName } else { $detail.IP }
+    $global:SVPORT = [int]$detail.Port
+
+    Write-Host ""
+    Write-Host ("선택됨: {0}" -f $global:SV) -ForegroundColor Green
+    Write-Host ("`$SV     = {0}" -f $global:SV)
+    Write-Host ("`$SVIP   = {0}" -f $global:SVIP)
+    Write-Host ("`$SVPORT = {0}" -f $global:SVPORT)
+
+    [pscustomobject]@{
+        SV     = $global:SV
+        SVIP   = $global:SVIP
+        SVPORT = $global:SVPORT
+    }
+}
+
 function Render-SshPicker {
     # fnc-ignore
     param(
@@ -695,6 +721,9 @@ function Render-SshPicker {
 
 function Set-SshHost {
     param(
+        [Parameter(Position = 0)]
+        [string]$Alias,
+
         [string]$ConfigPath = "$HOME/.ssh/config"
     )
 
@@ -702,11 +731,15 @@ function Set-SshHost {
         throw "ssh 명령을 찾지 못했습니다. OpenSSH Client가 설치되어 있어야 합니다."
     }
 
+    if (-not (Test-Path -LiteralPath $ConfigPath)) {
+        throw ("ssh config 파일이 없습니다: {0}" -f $ConfigPath)
+    }
+
     $visited = @{}
     $rawEntries = Get-SshAliasesFromConfigFile -Path $ConfigPath -Visited $visited
 
     if (-not $rawEntries -or $rawEntries.Count -eq 0) {
-        throw "선택 가능한 Host 항목을 찾지 못했습니다. config 파일을 확인해 주세요."
+        throw ("선택 가능한 Host 항목을 찾지 못했습니다. config 파일을 확인해 주세요: {0}" -f $ConfigPath)
     }
 
     $seen = @{}
@@ -719,6 +752,19 @@ function Set-SshHost {
             $seen[$key] = $true
             [void]$entries.Add($entry)
         }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($Alias)) {
+        $matchedEntry = $entries | Where-Object {
+            $_.Alias -ieq $Alias
+        } | Select-Object -First 1
+
+        if (-not $matchedEntry) {
+            Write-Error ("ssh config에 정의된 Host를 찾지 못했습니다: {0}" -f $Alias)
+            return
+        }
+
+        return Set-SshSelectionVars -Entry $matchedEntry
     }
 
     $index = 0
@@ -743,23 +789,7 @@ function Set-SshHost {
 
             'Enter' {
                 $selected = $entries[$index]
-                $detail = Get-SshDetailCached -Alias $selected.Alias
-
-                $global:SV = $selected.Alias
-                $global:SVIP = if ([string]::IsNullOrWhiteSpace($detail.IP)) { $detail.HostName } else { $detail.IP }
-                $global:SVPORT = [int]$detail.Port
-
-                Write-Host ""
-                Write-Host ("선택됨: {0}" -f $global:SV) -ForegroundColor Green
-                Write-Host ("`$SV     = {0}" -f $global:SV)
-                Write-Host ("`$SVIP   = {0}" -f $global:SVIP)
-                Write-Host ("`$SVPORT = {0}" -f $global:SVPORT)
-
-                return [pscustomobject]@{
-                    SV     = $global:SV
-                    SVIP   = $global:SVIP
-                    SVPORT = $global:SVPORT
-                }
+                return Set-SshSelectionVars -Entry $selected
             }
 
             'Escape' {
