@@ -59,11 +59,18 @@
           "template": " <#FF9E64></> <#FFFFFF>{{ round .PhysicalPercentUsed .Precision }}%</> "
         },
         {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#444444",
+          "background": "transparent",
+          "template": " | "
+        },
+        {
           "type": "battery",
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": " | <#9AFF87></> <#FFFFFF>{{ .Percentage }}%</> "
+          "template": "<#9AFF87></> <#FFFFFF>{{ .Percentage }}%</> "
         },
         {
           "type": "text",
@@ -77,7 +84,7 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": " <#17d7a0></> <#FFFFFF>{{ .Env.OMP_TAG }}</> "
+          "template": "{{ $tag := .Env.OMP_TAG }}{{ $sv := .Env.OMP_SV }}{{ if or $tag $sv }}<#17d7a0></> <#FFFFFF>{{ if $tag }}{{ $tag }}{{ end }}{{ if and $tag $sv }} <#444444>|</> {{ end }}{{ if $sv }}<#E9C46A> </>SV : {{ $sv }}{{ end }}</> {{ end }}"
         }
       ]
     },    
