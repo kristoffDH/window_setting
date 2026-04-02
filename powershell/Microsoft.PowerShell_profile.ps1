@@ -8,6 +8,7 @@ oh-my-posh init pwsh --config $HOME/.mytheme.omp.json | Invoke-Expression
 Set-Alias ls lsd
 Set-Alias vi vim
 Set-Alias grep findstr
+Set-Alias sss Set-SshHost
 
 # config path setting
 $omp_config_file = "$env:HOMEPATH/.mytheme.omp.json"
@@ -34,8 +35,8 @@ $env:OMP_LINK3_PATH = "C:\Users\Hanssak\Desktop"
 $env:OMP_LINK3_NAME = "Desktop"
 $env:OMP_LINK4_PATH = "C:\CorePlatform"
 $env:OMP_LINK4_NAME = "CorePlatform"
-$env:OMP_LINK5_PATH = "Z:\주간보고\CORE센터_CORE플랫폼팀\2026년\김대호"
-$env:OMP_LINK5_NAME = "주간보고"
+$env:OMP_LINK5_PATH = ""
+$env:OMP_LINK5_NAME = ""
 
 #############################################################################
 # function
@@ -963,4 +964,21 @@ function ssh-con {
 
     Write-Host ("connecting: tssh {0}" -f $global:SV) -ForegroundColor Green
     & tssh $global:SV @Args
+}
+
+function ping-test {
+    $svipVar = Get-Variable SVIP -Scope Global -ErrorAction SilentlyContinue
+
+    if (-not $svipVar -or [string]::IsNullOrWhiteSpace($global:SVIP)) {
+        Write-Error "SVIP가 설정되어 있지 않습니다. 먼저 svpick으로 서버를 선택해 주세요."
+        return
+    }
+
+    $parsedIp = $null
+    if (-not [System.Net.IPAddress]::TryParse($global:SVIP, [ref]$parsedIp)) {
+        Write-Error ("SVIP 값이 올바른 IP 형식이 아닙니다: {0}" -f $global:SVIP)
+        return
+    }
+
+    & ping.exe -t $parsedIp.IPAddressToString
 }
