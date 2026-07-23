@@ -141,8 +141,21 @@ function ssh-config
     code $Home/.ssh/config
 }
 
-function reload {
+function reload 
+{
     oh-my-posh init pwsh --config "$HOME\.mytheme.omp.json" | Invoke-Expression
+}
+
+function upload_pwsh_cfg
+{
+    git add .; git commit -m "update pwsh function"; git push;
+}
+
+############################################################################################
+
+function gs
+{
+    git status
 }
 
 ############################################################################################
