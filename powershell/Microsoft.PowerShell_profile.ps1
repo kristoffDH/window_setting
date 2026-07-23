@@ -8,7 +8,6 @@ oh-my-posh init pwsh --config $HOME/.mytheme.omp.json | Invoke-Expression
 Set-Alias ls lsd
 Set-Alias vi vim
 Set-Alias grep findstr
-Set-Alias sss Set-SshHost
 
 # config path setting
 $omp_config_file = "$env:HOMEPATH/.mytheme.omp.json"
@@ -248,7 +247,7 @@ function Show-MyPalette {
         $extraColors += New-Tone -Hex $a.Hex -Factor 0.7 -Suffix ("{0}_dark"  -f $a.Name)
     }
 
-    # 3) 추천 추가 색상들 (+ 이전 extra + 추가 10개)
+    # 3) 추천 추가 색상들 
     $extraColors += @(
         @{ Name = "softFg";        Hex = "#C7CCD1" },
         @{ Name = "midBorder";     Hex = "#5C6773" },
@@ -265,42 +264,74 @@ function Show-MyPalette {
         @{ Name = "magenta";       Hex = "#FF79C6" },
         @{ Name = "violet";        Hex = "#B388FF" },
 
-        @{ Name = "softBg";        Hex = "#252733" },  # 약간 푸른기 도는 다크 배경
-        @{ Name = "softBgAlt";     Hex = "#2B3040" },  # 서브 패널 배경용
-        @{ Name = "panelBorder";   Hex = "#4B5563" },  # 경계선/구분선
-        @{ Name = "lineHighlight"; Hex = "#31364A" },  # 선택/하이라이트 라인
+        @{ Name = "softBg";        Hex = "#252733" },  
+        @{ Name = "softBgAlt";     Hex = "#2B3040" },  
+        @{ Name = "panelBorder";   Hex = "#4B5563" },  
+        @{ Name = "lineHighlight"; Hex = "#31364A" },  
 
-        @{ Name = "statusGreen";   Hex = "#3DD68C" },  # 성공/OK 상태
-        @{ Name = "statusYellow";  Hex = "#F6C453" },  # 경고/주의
-        @{ Name = "statusRed";     Hex = "#F75C7E" },  # 에러/위험
-        @{ Name = "statusBlue";    Hex = "#2F9BFF" },  # 정보/알림
+        @{ Name = "statusGreen";   Hex = "#3DD68C" },  
+        @{ Name = "statusYellow";  Hex = "#F6C453" },  
+        @{ Name = "statusRed";     Hex = "#F75C7E" },  
+        @{ Name = "statusBlue";    Hex = "#2F9BFF" },  
 
-        @{ Name = "tagPink";       Hex = "#FF8EC7" },  # 관리자 표시용 핑크 계열
-        @{ Name = "tagPinkDark";   Hex = "#D75A9C" },  # 핑크 계열 진한 톤
-        @{ Name = "royalPurple";   Hex = "#6C4AB6" },  # 깊은 보라
-        @{ Name = "indigo";        Hex = "#4953C4" },  # 인디고/네이비 사이
+        @{ Name = "tagPink";       Hex = "#FF8EC7" },  
+        @{ Name = "tagPinkDark";   Hex = "#D75A9C" },  
+        @{ Name = "royalPurple";   Hex = "#6C4AB6" },  
+        @{ Name = "indigo";        Hex = "#4953C4" },  
 
-        @{ Name = "softCyan";      Hex = "#7FE7FF" },  # 밝은 시안
-        @{ Name = "deepCyan";      Hex = "#008B9E" },  # 진한 시안/티얼
-        @{ Name = "mint";          Hex = "#9CF6E0" },  # 파스텔 민트
-        @{ Name = "deepMint";      Hex = "#0F9F8C" },  # 딥 민트
+        @{ Name = "softCyan";      Hex = "#7FE7FF" },  
+        @{ Name = "deepCyan";      Hex = "#008B9E" },  
+        @{ Name = "mint";          Hex = "#9CF6E0" },  
+        @{ Name = "deepMint";      Hex = "#0F9F8C" },  
 
-        @{ Name = "warningOrange"; Hex = "#FFB347" },  # 경고 강조용 오렌지
-        @{ Name = "accentGold";    Hex = "#E9C46A" },  # 포인트용 골드
-        @{ Name = "graphLine1";    Hex = "#A3B9FF" },  # 그래프/라인1
-        @{ Name = "graphLine2";    Hex = "#89F0FF" },  # 그래프/라인2
+        @{ Name = "warningOrange"; Hex = "#FFB347" },  
+        @{ Name = "accentGold";    Hex = "#E9C46A" },  
+        @{ Name = "graphLine1";    Hex = "#A3B9FF" },  
+        @{ Name = "graphLine2";    Hex = "#89F0FF" },  
 
-        # ───── 추가 색상 10개 ─────
-        @{ Name = "softPink";      Hex = "#FFB3D9" },  # 부드러운 핑크
-        @{ Name = "deepPink";      Hex = "#E05297" },  # 진한 핑크
-        @{ Name = "consoleBgAlt";  Hex = "#1F2430" },  # 아주 어두운 콘솔 배경
-        @{ Name = "mutedBlue";     Hex = "#5C7CFA" },  # 살짝 채도 낮은 블루
-        @{ Name = "mutedTeal";     Hex = "#3CB9A4" },  # 차분한 틸
-        @{ Name = "softLime";      Hex = "#B8F28D" },  # 연한 라임 그린
-        @{ Name = "errorBg";       Hex = "#4A1F2F" },  # 에러 라인 배경
-        @{ Name = "successBg";     Hex = "#123E3A" },  # 성공 라인 배경
-        @{ Name = "infoBg";        Hex = "#102A43" },  # 정보 라인 배경
-        @{ Name = "badgeBg";       Hex = "#3D3B5C" }   # 배지/라벨 배경
+        @{ Name = "softPink";      Hex = "#FFB3D9" },  
+        @{ Name = "deepPink";      Hex = "#E05297" },  
+        @{ Name = "consoleBgAlt";  Hex = "#1F2430" },  
+        @{ Name = "mutedBlue";     Hex = "#5C7CFA" },  
+        @{ Name = "mutedTeal";     Hex = "#3CB9A4" },  
+        @{ Name = "softLime";      Hex = "#B8F28D" },  
+        @{ Name = "errorBg";       Hex = "#4A1F2F" },  
+        @{ Name = "successBg";     Hex = "#123E3A" },  
+        @{ Name = "infoBg";        Hex = "#102A43" },  
+        @{ Name = "badgeBg";       Hex = "#3D3B5C" },  
+            
+        @{ Name = "mintLight";      Hex = "#9CF6E0" },
+        @{ Name = "mintSoft";       Hex = "#B9FBC0" },
+        @{ Name = "mintPale";       Hex = "#D8FFF4" },
+        @{ Name = "tealSoft";       Hex = "#7FE7D6" },
+        @{ Name = "tealDeep";       Hex = "#2EC4B6" },
+
+        @{ Name = "cyanSoft";       Hex = "#89F0FF" },
+        @{ Name = "skySoft";        Hex = "#BDE0FE" },
+        @{ Name = "blueAccent";     Hex = "#3A86FF" },
+        @{ Name = "navyDark";       Hex = "#102A43" },
+        @{ Name = "blueGray";       Hex = "#5C6773" },
+
+        @{ Name = "lavenderSoft";   Hex = "#CDB4DB" },
+        @{ Name = "violetSoft";     Hex = "#B388FF" },
+        @{ Name = "purpleDeep";     Hex = "#6C4AB6" },
+        @{ Name = "badgePurple";    Hex = "#3D3B5C" },
+
+        @{ Name = "roseSoft";       Hex = "#F7A8B8" },
+        @{ Name = "pinkSoft";       Hex = "#FFB3D9" },
+        @{ Name = "coralSoft";      Hex = "#FFB4A2" },
+        @{ Name = "salmonSoft";     Hex = "#FF8A8A" },
+
+        @{ Name = "yellowSoft";     Hex = "#FFF3B0" },
+        @{ Name = "goldSoft";       Hex = "#E9C46A" },
+        @{ Name = "amberSoft";      Hex = "#F6C453" },
+        @{ Name = "orangeSoft";     Hex = "#FFB347" },
+
+        @{ Name = "bgDeepMint";     Hex = "#123E3A" },
+        @{ Name = "bgTealDark";     Hex = "#0B2E33" },
+        @{ Name = "bgNavyDark";     Hex = "#102A43" },
+        @{ Name = "bgPanelDark";    Hex = "#1F2430" },
+        @{ Name = "borderMintDark"; Hex = "#256D63" }
     )
 
     Show-ColorRow -Title "Flat Remix base palette" -Colors $baseColors
@@ -646,12 +677,25 @@ function Set-SshSelectionVars {
 
     $detail = Get-SshDetailCached -Alias $Entry.Alias
 
+    # 선택한 ssh Host 별칭
     $global:SV = $Entry.Alias
-    $global:SVIP = if ([string]::IsNullOrWhiteSpace($detail.IP)) { $detail.HostName } else { $detail.IP }
     $global:SVPORT = [int]$detail.Port
     $env:OMP_SV = $global:SV
 
+    # ssh -G 결과의 HostName을 실제 IP로 변환한 값만 SVIP에 저장한다.
+    # IP 확인에 실패하면 이전 서버의 SVIP가 남지 않도록 제거한다.
+    if ([string]::IsNullOrWhiteSpace($detail.IP)) {
+        Remove-Variable SVIP -Scope Global -ErrorAction SilentlyContinue
+
+        Show-SshSelectedScreen -Entry $Entry
+        Write-Warning ("원격 IP를 확인하지 못해 `$SVIP를 설정하지 않았습니다. HostName: {0}" -f $detail.HostName)
+        return
+    }
+
+    $global:SVIP = $detail.IP
+
     Show-SshSelectedScreen -Entry $Entry
+    Write-Host ("변수 설정 완료: `$SV={0}, `$SVIP={1}, `$SVPORT={2}" -f $global:SV, $global:SVIP, $global:SVPORT) -ForegroundColor Green
 }
 
 function clear-sv {
@@ -981,4 +1025,9 @@ function ping-test {
     }
 
     & ping.exe -t $parsedIp.IPAddressToString
+}
+
+function sss {
+    Set-SshHost
+    ssh-con
 }
