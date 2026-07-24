@@ -148,7 +148,10 @@ function reload
 
 function upload_pwsh_cfg
 {
+    $originalPath = Get-Location
+    cd "C:\Users\hanssak\win_term\window_setting\powershell"
     git add .; git commit -m "update pwsh function"; git push;
+    Set-Location -Path $originalPath
 }
 
 ############################################################################################
@@ -1133,11 +1136,18 @@ function ping-test {
 }
 
 function sss {
+    # sss-picker-v4: 실행할 때마다 이전 선택값을 제거한다.
+    # 새 서버를 선택하지 않으면 기존 SV를 재사용해 연결하지 않는다.
+    Remove-Variable SV -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable SVIP -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable SVPORT -Scope Global -ErrorAction SilentlyContinue
+    Remove-Item Env:OMP_SV -ErrorAction SilentlyContinue
+
     $selected = Set-SshHost
 
-    if (-not $selected) {
-        return
-    }
-
-    ssh-con
-}
+    if (
+        -not $selected -or
+        -not (Get-Variable SV -Scope Global -ErrorAction SilentlyContinue) -or
+        [string]::IsNullOrWhiteSpace($global:SV)
+    ) {
+    
