@@ -804,6 +804,61 @@ function Show-SshSelectedScreen {
     Write-Host ""
 }
 
+function Read-SshPickerKey {
+    # fnc-ignore
+    # 일반 ConsoleKey와 VT 입력(ESC [ A/B 또는 ESC O A/B)을 모두 정규화한다.
+    $first = [Console]::ReadKey($true)
+    $firstKey = $first.Key.ToString()
+
+    switch ($firstKey) {
+        'UpArrow'    { return 'UpArrow' }
+        'DownArrow'  { return 'DownArrow' }
+        'LeftArrow'  { return 'LeftArrow' }
+        'RightArrow' { return 'RightArrow' }
+        'Enter'      { return 'Enter' }
+        'Escape'     { break }
+        default      { return $firstKey }
+    }
+
+    # ENABLE_VIRTUAL_TERMINAL_INPUT 상태에서는 방향키가
+    # ESC [ A / ESC [ B 형태의 여러 문자로 전달될 수 있다.
+    $deadline = [DateTime]::UtcNow.AddMilliseconds(80)
+
+    while (-not [Console]::KeyAvailable -and [DateTime]::UtcNow -lt $deadline) {
+        Start-Sleep -Milliseconds 2
+    }
+
+    # 뒤따르는 문자가 없으면 사용자가 누른 실제 Esc 키다.
+    if (-not [Console]::KeyAvailable) {
+        return 'Escape'
+    }
+
+    $second = [Console]::ReadKey($true)
+
+    if ($second.KeyChar -ne '[' -and $second.KeyChar -ne 'O') {
+        return 'Escape'
+    }
+
+    $deadline = [DateTime]::UtcNow.AddMilliseconds(80)
+
+    while (-not [Console]::KeyAvailable -and [DateTime]::UtcNow -lt $deadline) {
+        Start-Sleep -Milliseconds 2
+    }
+
+    if (-not [Console]::KeyAvailable) {
+        return 'Escape'
+    }
+
+    $third = [Console]::ReadKey($true)
+
+    switch ([char]$third.KeyChar) {
+        'A' { return 'UpArrow' }
+        'B' { return 'DownArrow' }
+        'C' { return 'RightArrow' }
+        'D' { return 'LeftArrow' }
+        default { return 'Escape' }
+    }
+}
 function Set-SshHost {
     param(
         [Parameter(Position = 0)]
@@ -857,9 +912,8 @@ function Set-SshHost {
     while ($true) {
         Render-SshPicker -Entries $entries.ToArray() -Index $index
 
-        $keyInfo = [Console]::ReadKey($true)
-
-        switch ($keyInfo.Key) {
+        $pickerKey = Read-SshPickerKey
+        switch ($pickerKey) {
             'UpArrow' {
                 if ($index -gt 0) {
                     $index--
