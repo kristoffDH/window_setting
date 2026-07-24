@@ -737,7 +737,7 @@ function Render-SshPicker {
     [Console]::Clear()
 
     Write-Host ("SSH Host Picker  [{0}/{1}]" -f ($Index + 1), $total) -ForegroundColor Cyan
-    Write-Host "↑/↓ 이동  Enter 선택  Esc 종료" -ForegroundColor DarkGray
+    Write-Host "↑/↓ 이동  Ctrl+↑/↓ 3칸 이동  Enter 선택  Esc 취소" -ForegroundColor DarkGray
     Write-Host ""
 
     $visibleCount = [Math]::Min(11, $total)
@@ -806,13 +806,21 @@ function Show-SshSelectedScreen {
 
 function Read-SshPickerKey {
     # fnc-ignore
-    # 일반 ConsoleKey와 VT 입력(ESC [ A/B 또는 ESC O A/B)을 모두 정규화한다.
+    # sss-picker-v3: Esc 취소 및 Ctrl+Up/Down 3칸 이동 지원
+    # 일반 ConsoleKey와 VT 입력(ESC [ A/B, ESC [ 1;5 A/B)을 모두 정규화한다.
     $first = [Console]::ReadKey($true)
     $firstKey = $first.Key.ToString()
+    $isCtrl = ($first.Modifiers -band [ConsoleModifiers]::Control) -ne 0
 
     switch ($firstKey) {
-        'UpArrow'    { return 'UpArrow' }
-        'DownArrow'  { return 'DownArrow' }
+        'UpArrow' {
+            if ($isCtrl) { return 'CtrlUpArrow' }
+            return 'UpArrow'
+        }
+        'DownArrow' {
+            if ($isCtrl) { return 'CtrlDownArrow' }
+            return 'DownArrow'
+        }
         'LeftArrow'  { return 'LeftArrow' }
         'RightArrow' { return 'RightArrow' }
         'Enter'      { return 'Enter' }
@@ -820,8 +828,7 @@ function Read-SshPickerKey {
         default      { return $firstKey }
     }
 
-    # ENABLE_VIRTUAL_TERMINAL_INPUT 상태에서는 방향키가
-    # ESC [ A / ESC [ B 형태의 여러 문자로 전달될 수 있다.
+    # ENABLE_VIRTUAL_TERMINAL_INPUT 상태에서는 키가 ESC 시퀀스로 전달될 수 있다.
     $deadline = [DateTime]::UtcNow.AddMilliseconds(80)
 
     while (-not [Console]::KeyAvailable -and [DateTime]::UtcNow -lt $deadline) {
@@ -839,21 +846,46 @@ function Read-SshPickerKey {
         return 'Escape'
     }
 
+    $sequence = New-Object System.Text.StringBuilder
+    [void]$sequence.Append([char]$second.KeyChar)
+    $finalChar = $null
+    $finalModifiers = [ConsoleModifiers]0
     $deadline = [DateTime]::UtcNow.AddMilliseconds(80)
 
-    while (-not [Console]::KeyAvailable -and [DateTime]::UtcNow -lt $deadline) {
-        Start-Sleep -Milliseconds 2
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if (-not [Console]::KeyAvailable) {
+            Start-Sleep -Milliseconds 2
+            continue
+        }
+
+        $next = [Console]::ReadKey($true)
+        $char = [char]$next.KeyChar
+        [void]$sequence.Append($char)
+        $deadline = [DateTime]::UtcNow.AddMilliseconds(80)
+
+        if ($char -in @('A', 'B', 'C', 'D')) {
+            $finalChar = $char
+            $finalModifiers = $next.Modifiers
+            break
+        }
     }
 
-    if (-not [Console]::KeyAvailable) {
+    if ($null -eq $finalChar) {
         return 'Escape'
     }
 
-    $third = [Console]::ReadKey($true)
+    $sequenceText = $sequence.ToString()
+    $isCtrlSequence = (($finalModifiers -band [ConsoleModifiers]::Control) -ne 0) -or ($sequenceText -match ';5[A-D]$')
 
-    switch ([char]$third.KeyChar) {
-        'A' { return 'UpArrow' }
-        'B' { return 'DownArrow' }
+    switch ($finalChar) {
+        'A' {
+            if ($isCtrlSequence) { return 'CtrlUpArrow' }
+            return 'UpArrow'
+        }
+        'B' {
+            if ($isCtrlSequence) { return 'CtrlDownArrow' }
+            return 'DownArrow'
+        }
         'C' { return 'RightArrow' }
         'D' { return 'LeftArrow' }
         default { return 'Escape' }
@@ -904,7 +936,8 @@ function Set-SshHost {
             return
         }
 
-        return Set-SshSelectionVars -Entry $matchedEntry
+        Set-SshSelectionVars -Entry $matchedEntry
+        return $true
     }
 
     $index = 0
@@ -915,26 +948,31 @@ function Set-SshHost {
         $pickerKey = Read-SshPickerKey
         switch ($pickerKey) {
             'UpArrow' {
-                if ($index -gt 0) {
-                    $index--
-                }
+                $index = [Math]::Max(0, $index - 1)
+            }
+
+            'CtrlUpArrow' {
+                $index = [Math]::Max(0, $index - 3)
             }
 
             'DownArrow' {
-                if ($index -lt ($entries.Count - 1)) {
-                    $index++
-                }
+                $index = [Math]::Min($entries.Count - 1, $index + 1)
+            }
+
+            'CtrlDownArrow' {
+                $index = [Math]::Min($entries.Count - 1, $index + 3)
             }
 
             'Enter' {
                 $selected = $entries[$index]
-                return Set-SshSelectionVars -Entry $selected
+                Set-SshSelectionVars -Entry $selected
+                return $true
             }
 
             'Escape' {
                 Write-Host ""
                 Write-Host "취소했습니다." -ForegroundColor DarkYellow
-                return $null
+                return $false
             }
         }
     }
@@ -1095,6 +1133,11 @@ function ping-test {
 }
 
 function sss {
-    Set-SshHost
+    $selected = Set-SshHost
+
+    if (-not $selected) {
+        return
+    }
+
     ssh-con
 }
