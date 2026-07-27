@@ -1150,4 +1150,91 @@ function sss {
         -not (Get-Variable SV -Scope Global -ErrorAction SilentlyContinue) -or
         [string]::IsNullOrWhiteSpace($global:SV)
     ) {
-    
+        return
+    }
+
+    ssh-con
+}
+
+function Test-ScpReady {
+    # fnc-ignore
+    # up/dn 실행 전 scp 존재 여부와 $SV, $SVIP, $SVPORT 설정 여부를 확인한다.
+    if (-not (Get-Command scp -ErrorAction SilentlyContinue)) {
+        Write-Error "scp 명령을 찾지 못했습니다. OpenSSH Client가 설치되어 있어야 합니다."
+        return $false
+    }
+
+    foreach ($name in 'SV', 'SVIP', 'SVPORT') {
+        $var = Get-Variable $name -Scope Global -ErrorAction SilentlyContinue
+
+        if (-not $var -or [string]::IsNullOrWhiteSpace([string]$var.Value)) {
+            Write-Host ("`${0}가 설정되지 않았습니다. 먼저 sss로 서버를 선택해 주세요." -f $name) -ForegroundColor Yellow
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function up # scp local -> remote ($SV)
+{
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$LocalPath,
+
+        [Parameter(Position = 1)]
+        [string]$RemotePath = '~/'
+    )
+
+    if (-not (Test-ScpReady)) { return }
+
+    if (-not (Test-Path -LiteralPath $LocalPath)) {
+        Write-Error ("로컬 경로를 찾지 못했습니다: {0}" -f $LocalPath)
+        return
+    }
+
+    $resolved = (Resolve-Path -LiteralPath $LocalPath).Path
+
+    # $SV는 ssh config 별칭이므로 User/IdentityFile은 config에서 가져오고 포트만 명시한다.
+    $scpArgs = @('-P', $global:SVPORT)
+
+    if (Test-Path -LiteralPath $resolved -PathType Container) {
+        $scpArgs += '-r'
+    }
+
+    $target = "{0}:{1}" -f $global:SV, $RemotePath
+
+    Write-Host ("upload: {0} -> {1} ({2}:{3})" -f $resolved, $target, $global:SVIP, $global:SVPORT) -ForegroundColor Green
+    & scp @scpArgs $resolved $target
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "업로드 완료" -ForegroundColor Green
+    }
+    else {
+        Write-Error ("업로드 실패 (exit code: {0})" -f $LASTEXITCODE)
+    }
+}
+
+function dn # scp remote ($SV) -> $HOME/Downloads
+{
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$RemotePath
+    )
+
+    if (-not (Test-ScpReady)) { return }
+
+    $downloadDir = Join-Path $HOME 'Downloads'
+    $source = "{0}:{1}" -f $global:SV, $RemotePath
+
+    # 원격 경로가 디렉터리일 때만 -r을 붙인다.
+    # 자동완성으로 고른 디렉터리는 ls -p 덕분에 끝에 / 가 붙어 있어 ssh 확인 없이 판별되고,
+    # / 없이 직접 입력한 경로만 원격에서 test -d 로 확인한다.
+    $isDir = $RemotePath.EndsWith('/')
+
+    if (-not $isDir) {
+        if ($RemotePath -eq '~') {
+            $remoteTest = 'test -d "$HOME"'
+        }
+        elseif ($RemotePath.StartsWith('~/')) {
+            $remoteTest = 'test -
