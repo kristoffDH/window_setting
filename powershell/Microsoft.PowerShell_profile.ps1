@@ -6,7 +6,7 @@ oh-my-posh init pwsh --config $HOME/.mytheme.omp.json | Invoke-Expression
 
 # Alias 
 Set-Alias ls lsd
-Set-Alias vi vim
+Set-Alias vi nvim
 Set-Alias grep findstr
 
 # config path setting
@@ -141,7 +141,7 @@ function ssh-config
     code $Home/.ssh/config
 }
 
-function reload 
+function reload
 {
     oh-my-posh init pwsh --config "$HOME\.mytheme.omp.json" | Invoke-Expression
 }
@@ -1237,4 +1237,202 @@ function dn # scp remote ($SV) -> $HOME/Downloads
             $remoteTest = 'test -d "$HOME"'
         }
         elseif ($RemotePath.StartsWith('~/')) {
-            $remoteTest = 'test -
+            $remoteTest = 'test -d "$HOME/' + $RemotePath.Substring(2) + '"'
+        }
+        else {
+            $remoteTest = 'test -d "' + $RemotePath + '"'
+        }
+
+        & ssh -o BatchMode=yes -o ConnectTimeout=3 -p $global:SVPORT $global:SV $remoteTest 2>$null
+        $isDir = ($LASTEXITCODE -eq 0)
+    }
+
+    $scpArgs = @('-P', $global:SVPORT)
+
+    if ($isDir) {
+        $scpArgs += '-r'
+        Write-Host "원격 디렉터리로 감지되어 -r 옵션으로 다운로드합니다." -ForegroundColor DarkGray
+    }
+
+    Write-Host ("download: {0} -> {1} ({2}:{3})" -f $source, $downloadDir, $global:SVIP, $global:SVPORT) -ForegroundColor Green
+    & scp @scpArgs $source $downloadDir
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "다운로드 완료" -ForegroundColor Green
+    }
+    else {
+        Write-Error ("다운로드 실패 (exit code: {0})" -f $LASTEXITCODE)
+    }
+}
+
+# up/dn 원격 경로 자동완성: Tab을 누를 때마다 ssh로 원격 디렉터리 목록을 조회한다. (캐시 없음)
+# up은 업로드 대상이므로 디렉터리만, dn은 파일/디렉터리 모두 후보로 보여준다.
+Register-ArgumentCompleter -CommandName up, dn -ParameterName RemotePath -ScriptBlock {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+    $sv = Get-Variable SV -Scope Global -ErrorAction SilentlyContinue
+    $svport = Get-Variable SVPORT -Scope Global -ErrorAction SilentlyContinue
+
+    if (-not $sv -or [string]::IsNullOrWhiteSpace([string]$sv.Value) -or
+        -not $svport -or [string]::IsNullOrWhiteSpace([string]$svport.Value)) {
+        return
+    }
+
+    $word = $wordToComplete.Trim("'`"")
+
+    # 입력값을 "디렉터리 부분 + 이름 접두어"로 분리
+    $slash = $word.LastIndexOf('/')
+    $dir = if ($slash -ge 0) { $word.Substring(0, $slash + 1) } else { '' }
+    $prefix = if ($slash -ge 0) { $word.Substring($slash + 1) } else { $word }
+
+    # 디렉터리 미지정이면 원격 홈, ~/ 시작이면 원격 $HOME으로 치환해서 조회한다.
+    # ($HOME은 원격 셸에서 확장되어야 하므로 PS에서는 리터럴로 유지)
+    if ([string]::IsNullOrEmpty($dir)) {
+        $remoteCmd = 'ls -1ap'
+    }
+    elseif ($dir.StartsWith('~/')) {
+        $remoteCmd = 'ls -1ap -- "$HOME/' + $dir.Substring(2) + '"'
+    }
+    else {
+        $remoteCmd = 'ls -1ap -- "' + $dir + '"'
+    }
+
+    $items = & ssh -o BatchMode=yes -o ConnectTimeout=3 -p $svport.Value $sv.Value "$remoteCmd 2>/dev/null" 2>$null
+
+    if ($LASTEXITCODE -ne 0 -or -not $items) {
+        return
+    }
+
+    $dirOnly = ($commandName -eq 'up')
+
+    foreach ($item in $items) {
+        if ($item -in './', '../') { continue }
+        if ($dirOnly -and -not $item.EndsWith('/')) { continue }
+        if ($prefix -and -not $item.StartsWith($prefix, [System.StringComparison]::Ordinal)) { continue }
+
+        # ls -p 덕분에 디렉터리는 끝에 / 가 붙어 이어서 탐색할 수 있다.
+        $full = "$dir$item"
+        $completionText = if ($full -match '\s') { "'$full'" } else { $full }
+
+        [System.Management.Automation.CompletionResult]::new(
+            $completionText,
+            $item,
+            [System.Management.Automation.CompletionResultType]::ProviderItem,
+            $full
+        )
+    }
+}
+
+function auth
+{
+    param(
+        [Parameter(Position = 0)]
+        [string]$Target,
+
+        [Parameter(Position = 1)]
+        [int]$Port = 0
+    )
+
+    foreach ($cmd in 'ssh', 'ssh-keygen') {
+        if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
+            Write-Error ("{0} 명령을 찾을 수 없습니다. OpenSSH 클라이언트 설치를 확인해 주세요." -f $cmd)
+            return
+        }
+    }
+
+    # 접속 대상: 인자가 있으면 인자(계정@서버IP)를, 없으면 sss로 선택한 $SV를 사용한다.
+    $portArgs = @()
+    if ($Target) {
+        $dest = $Target
+        if ($Port -gt 0) { $portArgs = @('-p', $Port) }
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace([string]$global:SV)) {
+        $dest = $global:SV
+        if ($Port -gt 0) { $portArgs = @('-p', $Port) }
+        elseif ($global:SVPORT) { $portArgs = @('-p', $global:SVPORT) }
+    }
+    else {
+        Write-Host "사용법: auth 계정@서버IP [포트]  (sss로 서버를 선택했다면 auth 만 입력)" -ForegroundColor Yellow
+        return
+    }
+
+    $sshDir = Join-Path $HOME '.ssh'
+    $pubKeys = @(Get-ChildItem -Path (Join-Path $sshDir '*.pub') -File -ErrorAction SilentlyContinue |
+        Where-Object { Test-Path -LiteralPath ($_.FullName -replace '\.pub$', '') })
+
+    # 1) 로컬 키 중 하나라도 이미 등록되어 있으면 바로 종료
+    foreach ($pub in $pubKeys) {
+        $priv = $pub.FullName -replace '\.pub$', ''
+        & ssh @portArgs -i $priv -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o ConnectTimeout=5 $dest exit 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host ("이미 SSH 키가 등록되어 있습니다: {0} ({1})" -f $dest, $pub.Name) -ForegroundColor Green
+            return
+        }
+    }
+
+    # 2) 사용할 키 결정: 없으면 생성, 하나면 그대로, 여러 개면 사용자에게 선택받기
+    if ($pubKeys.Count -eq 0) {
+        if (-not (Test-Path -LiteralPath $sshDir)) {
+            New-Item -ItemType Directory -Path $sshDir | Out-Null
+        }
+        $keyPath = Join-Path $sshDir 'id_ed25519'
+        $pubKeyPath = "$keyPath.pub"
+        if (Test-Path -LiteralPath $keyPath) {
+            # 개인키만 있고 .pub이 없는 경우: 개인키를 덮어쓰지 않고 공개키만 다시 뽑아낸다.
+            Write-Host ("기존 개인키에서 공개키를 복원합니다: {0}" -f $keyPath) -ForegroundColor Yellow
+            & ssh-keygen -y -f $keyPath | Set-Content -LiteralPath $pubKeyPath -Encoding ascii
+            if ($LASTEXITCODE -ne 0) {
+                Remove-Item -LiteralPath $pubKeyPath -ErrorAction SilentlyContinue
+                Write-Error "공개키 복원에 실패했습니다."
+                return
+            }
+        }
+        else {
+            Write-Host ("SSH 키가 없어 새로 생성합니다: {0}" -f $keyPath) -ForegroundColor Yellow
+            # PS 7.3 미만은 빈 문자열 인자가 네이티브 명령에 유실되므로 '""' 로 넘겨야 한다.
+            $emptyPass = if ($PSVersionTable.PSVersion -ge [version]'7.3') { '' } else { '""' }
+            & ssh-keygen -q -t ed25519 -f $keyPath -N $emptyPass
+            if ($LASTEXITCODE -ne 0) {
+                Write-Error "SSH 키 생성에 실패했습니다."
+                return
+            }
+        }
+    }
+    elseif ($pubKeys.Count -eq 1) {
+        $pubKeyPath = $pubKeys[0].FullName
+    }
+    else {
+        Write-Host "등록할 SSH 키를 선택해 주세요:" -ForegroundColor Cyan
+        for ($i = 0; $i -lt $pubKeys.Count; $i++) {
+            Write-Host ("  [{0}] {1}" -f ($i + 1), $pubKeys[$i].Name)
+        }
+        $choice = Read-Host ("번호 입력 (1-{0})" -f $pubKeys.Count)
+        $index = 0
+        if (-not [int]::TryParse($choice, [ref]$index) -or $index -lt 1 -or $index -gt $pubKeys.Count) {
+            Write-Host "잘못된 선택입니다. 취소합니다." -ForegroundColor Yellow
+            return
+        }
+        $pubKeyPath = $pubKeys[$index - 1].FullName
+    }
+
+    # 3) 공개키를 원격 authorized_keys에 추가 (이미 같은 줄이 있으면 건너뜀)
+    #    최초 접속이므로 여기서 서버 비밀번호를 물어본다.
+    Write-Host ("공개키 등록: {0} -> {1}" -f (Split-Path $pubKeyPath -Leaf), $dest) -ForegroundColor Green
+    Write-Host "서버 접속 비밀번호를 입력해 주세요." -ForegroundColor DarkGray
+    $remoteCmd = 'umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; k=$(cat); grep -qxF "$k" ~/.ssh/authorized_keys || echo "$k" >> ~/.ssh/authorized_keys'
+    Get-Content -LiteralPath $pubKeyPath -TotalCount 1 | & ssh @portArgs $dest $remoteCmd
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error ("공개키 등록에 실패했습니다 (exit code: {0})" -f $LASTEXITCODE)
+        return
+    }
+
+    # 4) 등록한 키로 실제 접속되는지 확인
+    $privKeyPath = $pubKeyPath -replace '\.pub$', ''
+    & ssh @portArgs -i $privKeyPath -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o ConnectTimeout=5 $dest exit 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host ("SSH 키 등록 완료 ({0})" -f $dest) -ForegroundColor Green
+    }
+    else {
+        Write-Host "키는 등록했지만 키 인증 확인에 실패했습니다. 서버의 sshd 설정(PubkeyAuthentication)을 확인해 주세요." -ForegroundColor Yellow
+    }
+}                                                       
