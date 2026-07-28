@@ -1435,4 +1435,4 @@ function auth
     else {
         Write-Host "키는 등록했지만 키 인증 확인에 실패했습니다. 서버의 sshd 설정(PubkeyAuthentication)을 확인해 주세요." -ForegroundColor Yellow
     }
-}                                                       
+}
