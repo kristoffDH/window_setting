@@ -8,7 +8,7 @@
   "transient_prompt": {
     "foreground": "#FFFFFF",
     "background": "transparent",
-    "template": "<#7E8BA3></> <#FFFFFF>{{ now | date \"15:04:05\" }}</>  <#0092FF></>  <#3A86FF>[</> <#FFFFFF>{{ .PWD }}</> <#3A86FF>]</> "
+    "template": "    <#0092FF></>  <#3A86FF>[</> <#FFFFFF>{{ .PWD }}</> <#3A86FF>]</> "
   },
 
   "blocks": [
@@ -22,69 +22,7 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": "{{ $has1 := and .Env.OMP_LINK1_NAME .Env.OMP_LINK1_PATH }}{{ $has2 := and .Env.OMP_LINK2_NAME .Env.OMP_LINK2_PATH }}{{ $has3 := and .Env.OMP_LINK3_NAME .Env.OMP_LINK3_PATH }}{{ $has4 := and .Env.OMP_LINK4_NAME .Env.OMP_LINK4_PATH }}{{ $has5 := and .Env.OMP_LINK5_NAME .Env.OMP_LINK5_PATH }}{{ if or $has1 (or $has2 (or $has3 (or $has4 $has5))) }} {{ if $has1 }}<#B8F28D></> {{ $p1 := .Env.OMP_LINK1_PATH }}{{ $u1 := printf \"file://%s\" $p1 }}\u001b]8;;{{$u1}}\u001b\\<#FFFFFF>{{ .Env.OMP_LINK1_NAME }}</>\u001b]8;;\u001b\\{{ end }}{{ if $has2 }}  <#444444>|</> <#6C4AB6></> {{ $p2 := .Env.OMP_LINK2_PATH }}{{ $u2 := printf \"file://%s\" $p2 }}\u001b]8;;{{$u2}}\u001b\\<#FFFFFF>{{ .Env.OMP_LINK2_NAME }}</>\u001b]8;;\u001b\\{{ end }}{{ if $has3 }}  <#444444>|</> <#FF8EC7></> {{ $p3 := .Env.OMP_LINK3_PATH }}{{ $u3 := printf \"file://%s\" $p3 }}\u001b]8;;{{$u3}}\u001b\\<#FFFFFF>{{ .Env.OMP_LINK3_NAME }}</>\u001b]8;;\u001b\\{{ end }}{{ if $has4 }}  <#444444>|</> <#FFB347></> {{ $p4 := .Env.OMP_LINK4_PATH }}{{ $u4 := printf \"file://%s\" $p4 }}\u001b]8;;{{$u4}}\u001b\\<#FFFFFF>{{ .Env.OMP_LINK4_NAME }}</>\u001b]8;;\u001b\\{{ end }}{{ if $has5 }}  <#444444>|</> <#7FE7FF></> {{ $p5 := .Env.OMP_LINK5_PATH }}{{ $u5 := printf \"file://%s\" $p5 }}\u001b]8;;{{$u5}}\u001b\\<#FFFFFF>{{ .Env.OMP_LINK5_NAME }}</>\u001b]8;;\u001b\\{{ end }}{{ end }}"
-        }
-      ]
-    },
-    {
-      "type": "prompt",
-      "alignment": "left",
-      "newline": true,
-      "segments": [
-        {
-          "type": "time",
-          "style": "plain",
-          "foreground": "#FFFFFF",
-          "background": "transparent",
-          "template": " <#7E8BA3></> <#FFFFFF>{{ .CurrentDate | date .Format }}</> ",
-          "properties": {
-            "time_format": "01-02 15:04:05"
-          }
-        },
-        {
-          "type": "text",
-          "style": "plain",
-          "foreground": "#444444",
-          "background": "transparent",
-          "template": " | "
-        },
-        {
-          "type": "sysinfo",
-          "style": "plain",
-          "foreground": "#FFFFFF",
-          "background": "transparent",
-          "properties": {
-            "precision": 0
-          },
-          "template": " <#FF9E64></> <#FFFFFF>{{ round .PhysicalPercentUsed .Precision }}%</> "
-        },
-        {
-          "type": "text",
-          "style": "plain",
-          "foreground": "#444444",
-          "background": "transparent",
-          "template": " | "
-        },
-        {
-          "type": "battery",
-          "style": "plain",
-          "foreground": "#FFFFFF",
-          "background": "transparent",
-          "template": "<#9AFF87></> <#FFFFFF>{{ .Percentage }}%</> "
-        },
-        {
-          "type": "text",
-          "style": "plain",
-          "foreground": "#444444",
-          "background": "transparent",
-          "template": " | "
-        },
-        {
-          "type": "text",
-          "style": "plain",
-          "foreground": "#FFFFFF",
-          "background": "transparent",
-          "template": "{{ $tag := .Env.OMP_TAG }}{{ $sv := .Env.OMP_SV }}{{ if or $tag $sv }}<#17d7a0></> <#FFFFFF>{{ if $tag }}{{ $tag }}{{ end }}{{ if and $tag $sv }} <#444444>|</> {{ end }}{{ if $sv }}<#E9C46A> </>SV : {{ $sv }}{{ end }}</> {{ end }}"
+          "template": "{{ $tag := .Env.OMP_TAG }}{{ $sv := .Env.OMP_SV }}{{ $svip := .Env.OMP_SVIP }}{{ $svport := .Env.OMP_SVPORT }}{{ if or $tag $sv }}<#17d7a0></> <#FFFFFF>{{ if $tag }}{{ $tag }}{{ end }}{{ if and $tag $sv }} <#444444>|</> {{ end }}{{ if $sv }}<#E9C46A> </>SV : {{ $sv }}{{ end }}{{ if $svip }} <#444444>|</> <#4CC9F0> </>IP : {{ $svip }}{{ end }}{{ if $svport }} <#444444>|</> <#F4A261> </>PORT : {{ $svport }}{{ end }}</> {{ end }}"
         }
       ]
     },    
