@@ -172,13 +172,23 @@ function reload
     oh-my-posh init pwsh --config "$HOME\.mytheme.omp.json" | Invoke-Expression
 }
 
-function upload_pwsh_cfg
+function upload-pwsh
 {
     $originalPath = Get-Location
     cd "C:\Users\hanssak\win_term\window_setting\powershell"
     cp $profile ./
     ls;
-    git add .; git commit -m "update pwsh function"; git push;
+    git add .; git commit -m "update pwsh"; git push;
+    Set-Location -Path $originalPath
+}
+
+function upload-omp
+{
+    $originalPath = Get-Location
+    cd "C:\Users\hanssak\win_term\omp-mytheme"
+    cp "$HOME\.mytheme.omp.json" ./
+    ls;
+    git add .; git commit -m "update omp"; git push;
     Set-Location -Path $originalPath
 }
 
