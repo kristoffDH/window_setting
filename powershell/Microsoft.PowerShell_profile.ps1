@@ -10,6 +10,7 @@ Set-Alias vi nvim
 Set-Alias grep findstr
 Set-Alias d dup
 
+
 # config path setting
 $omp_config_file = "$env:HOMEPATH/.mytheme.omp.json"
 $history_backup_file_path = "$env:APPDATA/Microsoft/Windows/PowerShell/PSReadLine"
@@ -152,6 +153,7 @@ function upload_pwsh_cfg
 {
     $originalPath = Get-Location
     cd "C:\Users\hanssak\win_term\window_setting\powershell"
+    ls;
     git add .; git commit -m "update pwsh function"; git push;
     Set-Location -Path $originalPath
 }
