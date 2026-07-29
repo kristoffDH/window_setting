@@ -8,6 +8,7 @@ oh-my-posh init pwsh --config $HOME/.mytheme.omp.json | Invoke-Expression
 Set-Alias ls lsd
 Set-Alias vi nvim
 Set-Alias grep findstr
+Set-Alias d dup
 
 # config path setting
 $omp_config_file = "$env:HOMEPATH/.mytheme.omp.json"
@@ -1434,5 +1435,71 @@ function auth
     }
     else {
         Write-Host "키는 등록했지만 키 인증 확인에 실패했습니다. 서버의 sshd 설정(PubkeyAuthentication)을 확인해 주세요." -ForegroundColor Yellow
+    }
+}
+
+function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 우측 | -l 좌측 | -u 상단 | -d 하단, 기본 -r)
+{
+    param(
+        [Alias('r')][switch]$Right,
+        [Alias('l')][switch]$Left,
+        [Alias('u')][switch]$Up,
+        [Alias('d')][switch]$Down
+    )
+
+    if (@($Right, $Left, $Up, $Down).Where({ $_ }).Count -gt 1) {
+        Write-Host "사용법: dup [-r|-l|-u|-d]  (방향은 하나만, 생략하면 -r 우측)" -ForegroundColor Yellow
+        return
+    }
+
+    if (-not (Get-Command wt -ErrorAction SilentlyContinue)) {
+        Write-Error "wt(Windows Terminal)를 찾을 수 없습니다. Windows Terminal 설치를 확인해 주세요."
+        return
+    }
+    if (-not $env:WT_SESSION) {
+        Write-Host "Windows Terminal 안에서 실행할 때만 분할할 수 있습니다." -ForegroundColor Yellow
+        return
+    }
+
+    # wt가 띄우는 새 pane은 현재 쉘의 변수/환경을 물려받지 않으므로,
+    # 세션 상태를 임시 스크립트에 담아 새 pane이 프로필 로드 후 실행하게 한다.
+    # (프로필에 정의된 alias/function은 새 pane이 프로필을 읽으면서 자동 적용된다)
+    $lines = [System.Collections.Generic.List[string]]::new()
+    foreach ($name in 'SV', 'SVIP') {
+        $var = Get-Variable $name -Scope Global -ErrorAction SilentlyContinue
+        if ($var -and $null -ne $var.Value) {
+            $lines.Add(("`$global:{0} = '{1}'" -f $name, ([string]$var.Value -replace "'", "''")))
+        }
+    }
+    $svport = Get-Variable SVPORT -Scope Global -ErrorAction SilentlyContinue
+    if ($svport -and $null -ne $svport.Value) {
+        $lines.Add(("`$global:SVPORT = {0}" -f [int]$svport.Value))
+    }
+    if ($env:OMP_SV) {
+        $lines.Add(("`$env:OMP_SV = '{0}'" -f ($env:OMP_SV -replace "'", "''")))
+    }
+    if ($global:SV) {
+        $lines.Add(("Write-Host 'dup: `$SV={0} 세션을 복제했습니다.' -ForegroundColor DarkGray" -f ([string]$global:SV -replace "'", "''")))
+    }
+    $lines.Add('Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue')
+
+    $initPath = Join-Path ([IO.Path]::GetTempPath()) ("dup_{0}.ps1" -f [guid]::NewGuid().ToString('N'))
+    Set-Content -LiteralPath $initPath -Value $lines -Encoding utf8BOM
+
+    # 새 pane은 현재와 같은 쉘 실행 파일, 같은 작업 경로로 시작한다.
+    $cwd = if ($PWD.Provider.Name -eq 'FileSystem') { $PWD.ProviderPath } else { $HOME }
+    $shell = (Get-Process -Id $PID).Path
+
+    # wt split-pane은 새 pane을 우측(-V)/하단(-H)에만 만들 수 있으므로,
+    # 좌측/상단은 분할 직후 swap-pane으로 기존 pane과 자리를 맞바꿔 구현한다.
+    $splitDir = if ($Up -or $Down) { '-H' } else { '-V' }
+    $swapArgs = @()
+    if ($Left) { $swapArgs = @(';', 'swap-pane', 'left') }
+    elseif ($Up) { $swapArgs = @(';', 'swap-pane', 'up') }
+
+    & wt -w 0 split-pane $splitDir -d $cwd $shell -NoExit -File $initPath @swapArgs
+    if ($LASTEXITCODE -ne 0) {
+        Remove-Item -LiteralPath $initPath -Force -ErrorAction SilentlyContinue
+        Write-Error ("pane 분할에 실패했습니다 (exit code: {0})" -f $LASTEXITCODE)
     }
 }
