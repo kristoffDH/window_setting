@@ -10,6 +10,7 @@ Set-Alias vi nvim
 Set-Alias grep findstr
 Set-Alias d dup
 Set-Alias p ping-test
+Set-Alias zz zi
 
 # config path setting
 $omp_config_file = "$env:HOMEPATH/.mytheme.omp.json"
@@ -22,12 +23,44 @@ Set-PSReadLineOption -PredictionViewStyle ListView
 
 Invoke-Expression (& { (zoxide init powershell | Out-String) })
 
-Set-Alias zz zi
-
 Set-PSReadLineOption -Colors @{ Parameter = '#7E8BA3' }
 Set-PSReadLineOption -Colors @{ Operator = '#7E8BA3' }
 
-$env:OMP_TAG = "IP : 10.10.70.52"
+function Update-OmpTag {
+    # fnc-ignore
+    # 로컬 IP를 조회해 프롬프트 태그(OMP_TAG)에 반영한다. IP를 못 찾으면 태그를 지운다.
+    $ip = $null
+
+    try {
+        # UDP connect는 패킷을 보내지 않고 라우팅 테이블 조회만으로 로컬 IP를 결정한다.
+        $udp = [System.Net.Sockets.UdpClient]::new()
+        try {
+            $udp.Connect('8.8.8.8', 53)
+            $ip = $udp.Client.LocalEndPoint.Address.IPAddressToString
+        }
+        finally {
+            $udp.Dispose()
+        }
+    }
+    catch {}
+
+    # 라우팅 조회가 실패했거나 무의미한 값이면 기본 게이트웨이가 있는 어댑터에서 조회한다.
+    if (-not $ip -or $ip -eq '0.0.0.0' -or $ip.StartsWith('169.254.')) {
+        $ip = Get-NetIPConfiguration -ErrorAction SilentlyContinue |
+            Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' } |
+            Select-Object -ExpandProperty IPv4Address -First 1 |
+            Select-Object -ExpandProperty IPAddress -First 1
+    }
+
+    if ($ip) {
+        $env:OMP_TAG = "IP : $ip"
+    }
+    else {
+        Remove-Item Env:OMP_TAG -ErrorAction SilentlyContinue
+    }
+}
+
+Update-OmpTag
 
 #############################################################################
 # function
@@ -135,6 +168,7 @@ function ssh-config
 
 function reload
 {
+    Update-OmpTag
     oh-my-posh init pwsh --config "$HOME\.mytheme.omp.json" | Invoke-Expression
 }
 
@@ -142,16 +176,30 @@ function upload_pwsh_cfg
 {
     $originalPath = Get-Location
     cd "C:\Users\hanssak\win_term\window_setting\powershell"
+    cp $profile ./
     ls;
     git add .; git commit -m "update pwsh function"; git push;
     Set-Location -Path $originalPath
 }
 
-############################################################################################
-
 function gs
 {
     git status
+}
+
+function gl
+{
+    git pull
+}
+
+function gp
+{
+    git push
+}
+
+function gf
+{
+    git fetch
 }
 
 ############################################################################################
@@ -690,11 +738,13 @@ function Set-SshSelectionVars {
     $global:SV = $Entry.Alias
     $global:SVPORT = [int]$detail.Port
     $env:OMP_SV = $global:SV
+    $env:OMP_SVPORT = $global:SVPORT
 
     # ssh -G 결과의 HostName을 실제 IP로 변환한 값만 SVIP에 저장한다.
     # IP 확인에 실패하면 이전 서버의 SVIP가 남지 않도록 제거한다.
     if ([string]::IsNullOrWhiteSpace($detail.IP)) {
         Remove-Variable SVIP -Scope Global -ErrorAction SilentlyContinue
+        Remove-Item Env:OMP_SVIP -ErrorAction SilentlyContinue
 
         Show-SshSelectedScreen -Entry $Entry
         Write-Warning ("원격 IP를 확인하지 못해 `$SVIP를 설정하지 않았습니다. HostName: {0}" -f $detail.HostName)
@@ -702,17 +752,25 @@ function Set-SshSelectionVars {
     }
 
     $global:SVIP = $detail.IP
+    $env:OMP_SVIP = $global:SVIP
 
     Show-SshSelectedScreen -Entry $Entry
     Write-Host ("변수 설정 완료: `$SV={0}, `$SVIP={1}, `$SVPORT={2}" -f $global:SV, $global:SVIP, $global:SVPORT) -ForegroundColor Green
 }
 
-function clear-sv {
+function Clear-SshSelectionVars {
     # fnc-ignore
     Remove-Variable SV -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SVIP -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SVPORT -Scope Global -ErrorAction SilentlyContinue
     Remove-Item Env:OMP_SV -ErrorAction SilentlyContinue
+    Remove-Item Env:OMP_SVIP -ErrorAction SilentlyContinue
+    Remove-Item Env:OMP_SVPORT -ErrorAction SilentlyContinue
+}
+
+function clear-sv {
+    # fnc-ignore
+    Clear-SshSelectionVars
 
     Write-Host "SV 정보 제거 완료" -ForegroundColor Yellow
 }
@@ -894,6 +952,10 @@ function Set-SshHost {
 
         [string]$ConfigPath = "$HOME/.ssh/config"
     )
+
+    # 실행할 때마다 이전 선택값을 먼저 제거한다.
+    # 새 서버를 선택하지 않고 중단(Esc, Ctrl+C, 오류)하면 기존 SV가 남지 않는다.
+    Clear-SshSelectionVars
 
     if (-not (Get-Command ssh -ErrorAction SilentlyContinue)) {
         throw "ssh 명령을 찾지 못했습니다. OpenSSH Client가 설치되어 있어야 합니다."
@@ -1129,13 +1191,8 @@ function ping-test {
 }
 
 function sss {
-    # sss-picker-v4: 실행할 때마다 이전 선택값을 제거한다.
+    # sss-picker-v5: 이전 선택값 제거는 Set-SshHost 시작 시 공통으로 처리한다.
     # 새 서버를 선택하지 않으면 기존 SV를 재사용해 연결하지 않는다.
-    Remove-Variable SV -Scope Global -ErrorAction SilentlyContinue
-    Remove-Variable SVIP -Scope Global -ErrorAction SilentlyContinue
-    Remove-Variable SVPORT -Scope Global -ErrorAction SilentlyContinue
-    Remove-Item Env:OMP_SV -ErrorAction SilentlyContinue
-
     $selected = Set-SshHost
 
     if (
@@ -1467,8 +1524,11 @@ function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 
     if ($svport -and $null -ne $svport.Value) {
         $lines.Add(("`$global:SVPORT = {0}" -f [int]$svport.Value))
     }
-    if ($env:OMP_SV) {
-        $lines.Add(("`$env:OMP_SV = '{0}'" -f ($env:OMP_SV -replace "'", "''")))
+    foreach ($name in 'OMP_SV', 'OMP_SVIP', 'OMP_SVPORT') {
+        $value = [Environment]::GetEnvironmentVariable($name)
+        if ($value) {
+            $lines.Add(("`$env:{0} = '{1}'" -f $name, ($value -replace "'", "''")))
+        }
     }
     if ($global:SV) {
         $lines.Add(("Write-Host 'dup: `$SV={0} 세션을 복제했습니다.' -ForegroundColor DarkGray" -f ([string]$global:SV -replace "'", "''")))
