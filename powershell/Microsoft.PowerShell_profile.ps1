@@ -13,6 +13,7 @@ Set-Alias d dup
 # config path setting
 $omp_config_file = "$env:HOMEPATH/.mytheme.omp.json"
 $history_backup_file_path = "$env:APPDATA/Microsoft/Windows/PowerShell/PSReadLine"
+$his_file = "$history_backup_file_path/ConsoleHost_history.txt"
 
 # PSReadLine
 Set-PSReadLineOption -PredictionSource History
@@ -83,11 +84,11 @@ function rsa-pubkey # show ssh rsa-public key
 
 function open-his
 {
-    code "$history_backup_file_path/ConsoleHost_history.txt"
+    code "$his_file"
 }
 
 function del-his {
-    $path = "$history_backup_file_path/ConsoleHost_history.txt"
+    $path = "$his_file"
 
     if (-not (Test-Path -LiteralPath $path)) {
         Write-Host "history 파일이 없습니다."
