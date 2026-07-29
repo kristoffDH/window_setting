@@ -9,6 +9,7 @@ Set-Alias ls lsd
 Set-Alias vi nvim
 Set-Alias grep findstr
 Set-Alias d dup
+Set-Alias p ping-test
 
 # config path setting
 $omp_config_file = "$env:HOMEPATH/.mytheme.omp.json"
