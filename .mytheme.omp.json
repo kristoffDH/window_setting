@@ -69,20 +69,6 @@
       "newline": true,
       "segments": [
         {
-          "type": "text",
-          "style": "plain",
-          "foreground": "#FFFFFF",
-          "background": "transparent",
-          "template": " {{ if .Root }}<#FF6B81></>{{ else }}<#FFFFFF></>{{ end }} "
-        },
-        {
-          "type": "text",
-          "style": "plain",
-          "foreground": "#444444",
-          "background": "transparent",
-          "template": " | "
-        },
-        {
           "type": "shell",
           "style": "plain",
           "foreground": "#FFFFFF",
