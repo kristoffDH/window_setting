@@ -923,6 +923,48 @@ function Clear-SshSelectionVars {
 
 # --- 선택기 UI ---
 
+function Reset-SshConsoleInput {
+    # fnc-ignore
+    # ssh/tssh를 Ctrl+C로 중단하면 콘솔 입력 모드(VT 입력 플래그)가 복원되지 않은 채 남아
+    # 다음 picker에서 방향키가 ESC 시퀀스 조각으로 들어와 커서가 움직이지 않을 수 있다.
+    # picker를 열기 전에 VT 입력 플래그를 끄고 남아 있는 입력 버퍼를 비운다.
+    if (-not ('SshPicker.Native' -as [type])) {
+        Add-Type -Namespace SshPicker -Name Native -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern IntPtr GetStdHandle(int nStdHandle);
+
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
+
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool FlushConsoleInputBuffer(IntPtr hConsoleHandle);
+'@
+    }
+
+    $STD_INPUT_HANDLE = -10
+    $ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200
+
+    $handle = [SshPicker.Native]::GetStdHandle($STD_INPUT_HANDLE)
+    if ($handle -eq [IntPtr]::Zero -or $handle.ToInt64() -eq -1) {
+        return
+    }
+
+    $mode = [uint32]0
+    if (-not [SshPicker.Native]::GetConsoleMode($handle, [ref]$mode)) {
+        return
+    }
+
+    $newMode = [uint32]($mode -band (-bnot $ENABLE_VIRTUAL_TERMINAL_INPUT))
+    if ($newMode -ne $mode) {
+        [void][SshPicker.Native]::SetConsoleMode($handle, $newMode)
+    }
+
+    [void][SshPicker.Native]::FlushConsoleInputBuffer($handle)
+}
+
 function Render-SshPicker {
     # fnc-ignore
     param(
@@ -1013,6 +1055,11 @@ function Read-SshPickerKey {
     $first = [Console]::ReadKey($true)
     $firstKey = $first.Key.ToString()
     $isCtrl = ($first.Modifiers -band [ConsoleModifiers]::Control) -ne 0
+
+    # VT 입력 모드에서는 ESC 문자가 Key=0(None)으로 들어올 수 있어 KeyChar로도 판별한다.
+    if ($first.KeyChar -eq [char]27) {
+        $firstKey = 'Escape'
+    }
 
     switch ($firstKey) {
         'UpArrow' {
@@ -1149,6 +1196,9 @@ function Set-SshHost {
         Set-SshSelectionVars -Entry $matchedEntry
         return $true
     }
+
+    # 직전 ssh/tssh가 Ctrl+C로 중단되며 콘솔 입력 모드가 깨졌을 수 있어 picker 전에 복구한다.
+    Reset-SshConsoleInput
 
     $index = 0
 
