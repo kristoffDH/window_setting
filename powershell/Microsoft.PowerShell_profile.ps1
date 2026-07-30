@@ -1,30 +1,50 @@
+#########################################################
+# 셸 초기화 영역 Start - 로드 순서 중요
+#########################################################
 
 # oh-my-posh module
 oh-my-posh init pwsh --config $HOME/.mytheme.omp.json | Invoke-Expression
 
-# setting env path
+# zoxide는 프롬프트 함수를 감싸므로 oh-my-posh 초기화 이후에 실행해야 한다.
+Invoke-Expression (& { (zoxide init powershell | Out-String) })
 
-# Alias 
-Set-Alias ls lsd
-Set-Alias vi nvim
-Set-Alias grep findstr
-Set-Alias d dup
-Set-Alias p ping-test
-Set-Alias zz zi
+# PSReadLine
+Set-PSReadLineOption -PredictionSource History
+Set-PSReadLineOption -PredictionViewStyle ListView
+Set-PSReadLineOption -Colors @{ Parameter = '#7E8BA3' }
+Set-PSReadLineOption -Colors @{ Operator = '#7E8BA3' }
+
+#########################################################
+# 셸 초기화 영역 End
+#########################################################
+
+
+#########################################################
+# 전역 변수 / Alias 영역 Start
+#########################################################
 
 # config path setting
 $omp_config_file = "$env:HOMEPATH/.mytheme.omp.json"
 $history_backup_file_path = "$env:APPDATA/Microsoft/Windows/PowerShell/PSReadLine"
 $his_file = "$history_backup_file_path/ConsoleHost_history.txt"
 
-# PSReadLine
-Set-PSReadLineOption -PredictionSource History
-Set-PSReadLineOption -PredictionViewStyle ListView
+# alias는 호출 시점에 이름이 해석되므로 대상 함수 정의(아래 영역)보다 앞에 둘 수 있다.
+Set-Alias ls lsd
+Set-Alias vi nvim
+Set-Alias grep findstr
+Set-Alias d dup
+Set-Alias p ping-test
+Set-Alias zz zi
+Set-Alias -Name svpick -Value Set-SshHost -Scope Global
 
-Invoke-Expression (& { (zoxide init powershell | Out-String) })
+#########################################################
+# 전역 변수 / Alias 영역 End
+#########################################################
 
-Set-PSReadLineOption -Colors @{ Parameter = '#7E8BA3' }
-Set-PSReadLineOption -Colors @{ Operator = '#7E8BA3' }
+
+#########################################################
+# 프롬프트(Oh My Posh) 관리 영역 Start
+#########################################################
 
 function Update-OmpTag {
     # fnc-ignore
@@ -62,34 +82,27 @@ function Update-OmpTag {
 
 Update-OmpTag
 
-#############################################################################
-# function
-#############################################################################
-
-function ll # lsd -al
+function reload
 {
-    param (
-        [string]$Path = (Get-Location)
-    )
-
-    ECHO "PATH : $Path" 
-    lsd -alg $Path
+    # OMP_TAG를 갱신하고 oh-my-posh 설정을 다시 읽어 프롬프트를 새로고침한다.
+    Update-OmpTag
+    oh-my-posh init pwsh --config "$HOME\.mytheme.omp.json" | Invoke-Expression
 }
 
-function lt # lsd -- tree
-{
-    param (
-        [string]$Path = (Get-Location)
-    )
-    
-    ECHO "PATH : $Path" 
-    lsd --tree $Path
-}
+#########################################################
+# 프롬프트(Oh My Posh) 관리 영역 End
+#########################################################
+
+
+#########################################################
+# 설정 파일 열기 / 백업 영역 Start
+#########################################################
 
 function config # open powershell profile config-file via vscode
 {
     code $PROFILE.CurrentUserCurrentHost
 }
+
 function config-lsd # open lsd config-file via vscode
 {
     code $env:APPDATA/lsd/config.yaml
@@ -97,20 +110,54 @@ function config-lsd # open lsd config-file via vscode
 
 function config-omp # open oh my posh config-file via vscode
 {
-    code $env:HOMEPATH/.mytheme.omp.json
+    code $omp_config_file
 }
 
-function rsa-pubkey # show ssh rsa-public key
+function ssh-config
 {
-    cat $env:HOMEPATH/.ssh/id_rsa.pub
+    # ssh config 파일을 VSCode로 연다.
+    code $Home/.ssh/config
 }
+
+function upload-pwsh
+{
+    # PowerShell 프로필을 win_term 저장소에 복사해 커밋하고 푸시한다.
+    $originalPath = Get-Location
+    cd "C:\Users\hanssak\win_term\window_setting\powershell"
+    cp $profile ./
+    ls;
+    git add .; git commit -m "update pwsh"; git push;
+    Set-Location -Path $originalPath
+}
+
+function upload-omp
+{
+    # oh-my-posh 테마 파일을 win_term 저장소에 복사해 커밋하고 푸시한다.
+    $originalPath = Get-Location
+    cd "C:\Users\hanssak\win_term\omp-mytheme"
+    cp $omp_config_file ./
+    ls;
+    git add .; git commit -m "update omp"; git push;
+    Set-Location -Path $originalPath
+}
+
+#########################################################
+# 설정 파일 열기 / 백업 영역 End
+#########################################################
+
+
+#########################################################
+# 명령 히스토리 관리 영역 Start
+#########################################################
 
 function open-his
 {
+    # 명령 히스토리 파일을 VSCode로 연다.
     code "$his_file"
 }
 
 function compact-his {
+    # 히스토리 파일에서 빈 줄과 중복 명령을 제거한다(최근 항목 유지, .bak 백업).
     $path = "$his_file"
 
     if (-not (Test-Path -LiteralPath $path)) {
@@ -143,6 +190,35 @@ function compact-his {
     Write-Host ("backup: {0}.bak" -f $path) -ForegroundColor DarkGray
 }
 
+#########################################################
+# 명령 히스토리 관리 영역 End
+#########################################################
+
+
+#########################################################
+# 일반 유틸리티 영역 Start
+#########################################################
+
+function ll # lsd -al
+{
+    param (
+        [string]$Path = (Get-Location)
+    )
+
+    ECHO "PATH : $Path" 
+    lsd -alg $Path
+}
+
+function lt # lsd -- tree
+{
+    param (
+        [string]$Path = (Get-Location)
+    )
+    
+    ECHO "PATH : $Path" 
+    lsd --tree $Path
+}
+
 function which # get binary path
 {
     param(
@@ -161,60 +237,50 @@ function down  # change directory downloads
     cd $Home/Downloads
 }
 
-function ssh-config
-{
-    code $Home/.ssh/config
-}
+#########################################################
+# 일반 유틸리티 영역 End
+#########################################################
 
-function reload
-{
-    Update-OmpTag
-    oh-my-posh init pwsh --config "$HOME\.mytheme.omp.json" | Invoke-Expression
-}
 
-function upload-pwsh
-{
-    $originalPath = Get-Location
-    cd "C:\Users\hanssak\win_term\window_setting\powershell"
-    cp $profile ./
-    ls;
-    git add .; git commit -m "update pwsh"; git push;
-    Set-Location -Path $originalPath
-}
-
-function upload-omp
-{
-    $originalPath = Get-Location
-    cd "C:\Users\hanssak\win_term\omp-mytheme"
-    cp "$HOME\.mytheme.omp.json" ./
-    ls;
-    git add .; git commit -m "update omp"; git push;
-    Set-Location -Path $originalPath
-}
+#########################################################
+# Git 단축 명령 영역 Start
+#########################################################
 
 function gs
 {
+    # git status
     git status
 }
 
 function gl
 {
+    # git pull
     git pull
 }
 
 function gp
 {
+    # git push
     git push
 }
 
 function gf
 {
+    # git fetch
     git fetch
 }
 
-############################################################################################
+#########################################################
+# Git 단축 명령 영역 End
+#########################################################
+
+
+#########################################################
+# 프로필 개발 도구 영역 Start
+#########################################################
 
 function Show-MyPalette {
+    # 터미널/프롬프트에서 쓰는 색상 팔레트를 견본으로 출력한다.
     $esc = [char]27
 
     function Convert-HexToRgb {
@@ -408,6 +474,7 @@ function Show-MyPalette {
 }
 
 function fnc {
+    # PROFILE에 정의된 함수 목록을 프로필 영역별로 묶어 설명과 함께 출력한다.
     $tokens = $null
     $errors = $null
 
@@ -427,39 +494,115 @@ function fnc {
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
     }, $true)
 
-    $names = foreach ($func in $functions) {
+    $comments = @($tokens | Where-Object {
+        $_.Kind -eq [System.Management.Automation.Language.TokenKind]::Comment
+    })
+
+    # 프로필의 영역 배너 주석에서 섹션 제목과 시작 위치를 읽는다.
+    $sections = @(foreach ($c in $comments) {
+        if ($c.Text -match '^#+\s*(.+?)\s+영역 Start\b') {
+            [pscustomobject]@{
+                Title  = $matches[1]
+                Offset = $c.Extent.StartOffset
+            }
+        }
+    })
+
+    $items = foreach ($func in $functions) {
         $start = $func.Extent.StartOffset
         $end   = $func.Extent.EndOffset
 
-        $hasIgnore = $tokens | Where-Object {
-            $_.Kind -eq [System.Management.Automation.Language.TokenKind]::Comment -and
+        # 본문에서 코드가 시작되는 지점(param 블록 또는 첫 문장)을 찾는다.
+        $body = $func.Body
+        $codeOffsets = @(
+            if ($body.ParamBlock) { $body.ParamBlock.Extent.StartOffset }
+            foreach ($block in @($body.BeginBlock, $body.ProcessBlock, $body.EndBlock)) {
+                if ($block -and $block.Statements.Count -gt 0) {
+                    $block.Statements[0].Extent.StartOffset
+                }
+            }
+        )
+        $firstCode = if ($codeOffsets.Count -gt 0) {
+            ($codeOffsets | Measure-Object -Minimum).Minimum
+        }
+        else {
+            $end
+        }
+
+        # 함수 선언 줄 끝의 주석 또는 본문 첫 코드 앞의 첫 주석을 설명으로 사용한다.
+        $head = $comments | Where-Object {
             $_.Extent.StartOffset -ge $start -and
-            $_.Extent.EndOffset -le $end -and
-            $_.Text -match '(?i)#\s*fnc-ignore\b'
+            $_.Extent.EndOffset -le $firstCode
         } | Select-Object -First 1
 
-        if (-not $hasIgnore) {
-            $func.Name
+        $text = if ($head) { ($head.Text -replace '^#+\s*', '').Trim() } else { '' }
+
+        # 첫 줄 주석이 fnc-ignore면 목록에서 제외한다.
+        if ($text -match '(?i)^fnc-ignore\b') {
+            continue
+        }
+
+        [pscustomobject]@{
+            Name        = $func.Name
+            Description = $text
+            Offset      = $start
         }
     }
 
-    $names = $names | Sort-Object -Unique
+    # 같은 이름은 첫 정의만 남기고, 프로필에 적힌 순서(오프셋순)를 유지한다.
+    $seen = @{}
+    $items = @($items | Sort-Object Offset | Where-Object {
+        if ($seen.ContainsKey($_.Name)) { return $false }
+        $seen[$_.Name] = $true
+        return $true
+    })
 
-    if (-not $names) {
+    if ($items.Count -eq 0) {
         Write-Host "표시할 함수가 없습니다."
         return
     }
 
-    Write-Host ("Functions in PROFILE ({0})" -f $names.Count) -ForegroundColor Cyan
-    Write-Host ""
+    Write-Host ("Functions in PROFILE ({0})" -f $items.Count) -ForegroundColor Cyan
+
+    $nameWidth = ($items | ForEach-Object { $_.Name.Length } | Measure-Object -Maximum).Maximum
 
     $index = 1
-    foreach ($name in $names) {
-        Write-Host ("{0,2}. {1}" -f $index, $name)
+    $currentSection = $null
+
+    foreach ($item in $items) {
+        # 함수 시작 위치보다 앞에 있는 마지막 영역 배너가 소속 영역이다.
+        $section = ($sections | Where-Object { $_.Offset -lt $item.Offset } | Select-Object -Last 1).Title
+        if (-not $section) { $section = '기타' }
+
+        if ($sections.Count -gt 0 -and $section -ne $currentSection) {
+            $currentSection = $section
+            Write-Host ""
+            Write-Host ("[ {0} ]" -f $section) -ForegroundColor Yellow
+        }
+
+        Write-Host ("{0,2}. {1}" -f $index, $item.Name.PadRight($nameWidth)) -NoNewline
+        if ($item.Description) {
+            Write-Host ("  # {0}" -f $item.Description) -ForegroundColor Gray
+        }
+        else {
+            Write-Host ""
+        }
         $index++
     }
 }
 
+#########################################################
+# 프로필 개발 도구 영역 End
+#########################################################
+
+
+#########################################################
+# SSH 서버 선택 / 접속 영역 Start
+#########################################################
+
+# --- 내부 헬퍼 ---
+
+# 선택기 상세 캐시: 별칭별 ssh -G/DNS 조회 결과를 세션 동안 재사용한다.
 $script:SshPickerDetailCache = @{}
 
 function Expand-UserPath {
@@ -778,12 +921,7 @@ function Clear-SshSelectionVars {
     Remove-Item Env:OMP_SVPORT -ErrorAction SilentlyContinue
 }
 
-function clear-sv {
-    # fnc-ignore
-    Clear-SshSelectionVars
-
-    Write-Host "SV 정보 제거 완료" -ForegroundColor Yellow
-}
+# --- 선택기 UI ---
 
 function Render-SshPicker {
     # fnc-ignore
@@ -955,7 +1093,11 @@ function Read-SshPickerKey {
         default { return 'Escape' }
     }
 }
+
+# --- 사용자 명령 ---
+
 function Set-SshHost {
+    # ssh config의 Host를 선택해 $SV/$SVIP/$SVPORT 변수를 설정한다. (alias: svpick)
     param(
         [Parameter(Position = 0)]
         [string]$Alias,
@@ -1046,9 +1188,215 @@ function Set-SshHost {
     }
 }
 
-Set-Alias -Name svpick -Value Set-SshHost -Scope Global
+function sss {
+    # 서버를 선택한 뒤 바로 tssh로 접속한다.
+    # sss-picker-v5: 이전 선택값 제거는 Set-SshHost 시작 시 공통으로 처리한다.
+    # 새 서버를 선택하지 않으면 기존 SV를 재사용해 연결하지 않는다.
+    $selected = Set-SshHost
+
+    if (
+        -not $selected -or
+        -not (Get-Variable SV -Scope Global -ErrorAction SilentlyContinue) -or
+        [string]::IsNullOrWhiteSpace($global:SV)
+    ) {
+        return
+    }
+
+    ssh-con
+}
+
+function ssh-con {
+    # 선택된 $SV 서버에 tssh로 접속한다.
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Args
+    )
+
+    if (-not (Get-Command tssh -ErrorAction SilentlyContinue)) {
+        Write-Error "tssh 명령을 찾지 못했습니다."
+        return
+    }
+
+    if (-not (Get-Variable SV -Scope Global -ErrorAction SilentlyContinue) -or
+        [string]::IsNullOrWhiteSpace($global:SV)) {
+        Write-Host "SV가 설정되지 않았습니다. 먼저 set-sshhost를 실행해 주세요." -ForegroundColor Yellow
+        return
+    }
+
+    $configPath = "$HOME/.ssh/config"
+
+    if ((Test-Path -LiteralPath $configPath) -and
+        (Get-Command Get-SshAliasesFromConfigFile -ErrorAction SilentlyContinue)) {
+
+        $visited = @{}
+        $rawEntries = Get-SshAliasesFromConfigFile -Path $configPath -Visited $visited
+
+        $aliases = $rawEntries |
+            ForEach-Object { $_.Alias } |
+            Sort-Object -Unique
+
+        $matched = $aliases |
+            Where-Object { $_ -ieq $global:SV } |
+            Select-Object -First 1
+
+        if (-not $matched) {
+            Write-Host ("현재 SV '{0}' 는 ssh config에 정의되어 있지 않습니다." -f $global:SV) -ForegroundColor Yellow
+            Write-Host "먼저 set-sshhost를 다시 실행해 주세요." -ForegroundColor Yellow
+            return
+        }
+    }
+
+    Write-Host ("connecting: tssh {0}" -f $global:SV) -ForegroundColor Green
+    & tssh $global:SV @Args
+}
+
+function clear-sv {
+    # fnc-ignore
+    Clear-SshSelectionVars
+
+    Write-Host "SV 정보 제거 완료" -ForegroundColor Yellow
+}
+
+function ping-test {
+    # 선택된 $SVIP로 ping을 계속 보낸다. (alias: p)
+    $svipVar = Get-Variable SVIP -Scope Global -ErrorAction SilentlyContinue
+
+    if (-not $svipVar -or [string]::IsNullOrWhiteSpace($global:SVIP)) {
+        Write-Error "SVIP가 설정되어 있지 않습니다. 먼저 svpick으로 서버를 선택해 주세요."
+        return
+    }
+
+    $parsedIp = $null
+    if (-not [System.Net.IPAddress]::TryParse($global:SVIP, [ref]$parsedIp)) {
+        Write-Error ("SVIP 값이 올바른 IP 형식이 아닙니다: {0}" -f $global:SVIP)
+        return
+    }
+
+    & ping.exe -t $parsedIp.IPAddressToString
+}
+
+function auth
+{
+    # 서버에 SSH 공개키를 등록해 비밀번호 없이 접속하도록 설정한다.
+    param(
+        [Parameter(Position = 0)]
+        [string]$Target,
+
+        [Parameter(Position = 1)]
+        [int]$Port = 0
+    )
+
+    foreach ($cmd in 'ssh', 'ssh-keygen') {
+        if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
+            Write-Error ("{0} 명령을 찾을 수 없습니다. OpenSSH 클라이언트 설치를 확인해 주세요." -f $cmd)
+            return
+        }
+    }
+
+    # 접속 대상: 인자가 있으면 인자(계정@서버IP)를, 없으면 sss로 선택한 $SV를 사용한다.
+    $portArgs = @()
+    if ($Target) {
+        $dest = $Target
+        if ($Port -gt 0) { $portArgs = @('-p', $Port) }
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace([string]$global:SV)) {
+        $dest = $global:SV
+        if ($Port -gt 0) { $portArgs = @('-p', $Port) }
+        elseif ($global:SVPORT) { $portArgs = @('-p', $global:SVPORT) }
+    }
+    else {
+        Write-Host "사용법: auth 계정@서버IP [포트]  (sss로 서버를 선택했다면 auth 만 입력)" -ForegroundColor Yellow
+        return
+    }
+
+    $sshDir = Join-Path $HOME '.ssh'
+    $pubKeys = @(Get-ChildItem -Path (Join-Path $sshDir '*.pub') -File -ErrorAction SilentlyContinue |
+        Where-Object { Test-Path -LiteralPath ($_.FullName -replace '\.pub$', '') })
+
+    # 1) 로컬 키 중 하나라도 이미 등록되어 있으면 바로 종료
+    foreach ($pub in $pubKeys) {
+        $priv = $pub.FullName -replace '\.pub$', ''
+        & ssh @portArgs -i $priv -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o ConnectTimeout=5 $dest exit 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host ("이미 SSH 키가 등록되어 있습니다: {0} ({1})" -f $dest, $pub.Name) -ForegroundColor Green
+            return
+        }
+    }
+
+    # 2) 사용할 키 결정: 없으면 생성, 하나면 그대로, 여러 개면 사용자에게 선택받기
+    if ($pubKeys.Count -eq 0) {
+        if (-not (Test-Path -LiteralPath $sshDir)) {
+            New-Item -ItemType Directory -Path $sshDir | Out-Null
+        }
+        $keyPath = Join-Path $sshDir 'id_ed25519'
+        $pubKeyPath = "$keyPath.pub"
+        if (Test-Path -LiteralPath $keyPath) {
+            # 개인키만 있고 .pub이 없는 경우: 개인키를 덮어쓰지 않고 공개키만 다시 뽑아낸다.
+            Write-Host ("기존 개인키에서 공개키를 복원합니다: {0}" -f $keyPath) -ForegroundColor Yellow
+            & ssh-keygen -y -f $keyPath | Set-Content -LiteralPath $pubKeyPath -Encoding ascii
+            if ($LASTEXITCODE -ne 0) {
+                Remove-Item -LiteralPath $pubKeyPath -ErrorAction SilentlyContinue
+                Write-Error "공개키 복원에 실패했습니다."
+                return
+            }
+        }
+        else {
+            Write-Host ("SSH 키가 없어 새로 생성합니다: {0}" -f $keyPath) -ForegroundColor Yellow
+            # PS 7.3 미만은 빈 문자열 인자가 네이티브 명령에 유실되므로 '""' 로 넘겨야 한다.
+            $emptyPass = if ($PSVersionTable.PSVersion -ge [version]'7.3') { '' } else { '""' }
+            & ssh-keygen -q -t ed25519 -f $keyPath -N $emptyPass
+            if ($LASTEXITCODE -ne 0) {
+                Write-Error "SSH 키 생성에 실패했습니다."
+                return
+            }
+        }
+    }
+    elseif ($pubKeys.Count -eq 1) {
+        $pubKeyPath = $pubKeys[0].FullName
+    }
+    else {
+        Write-Host "등록할 SSH 키를 선택해 주세요:" -ForegroundColor Cyan
+        for ($i = 0; $i -lt $pubKeys.Count; $i++) {
+            Write-Host ("  [{0}] {1}" -f ($i + 1), $pubKeys[$i].Name)
+        }
+        $choice = Read-Host ("번호 입력 (1-{0})" -f $pubKeys.Count)
+        $index = 0
+        if (-not [int]::TryParse($choice, [ref]$index) -or $index -lt 1 -or $index -gt $pubKeys.Count) {
+            Write-Host "잘못된 선택입니다. 취소합니다." -ForegroundColor Yellow
+            return
+        }
+        $pubKeyPath = $pubKeys[$index - 1].FullName
+    }
+
+    # 3) 공개키를 원격 authorized_keys에 추가 (이미 같은 줄이 있으면 건너뜀)
+    #    최초 접속이므로 여기서 서버 비밀번호를 물어본다.
+    Write-Host ("공개키 등록: {0} -> {1}" -f (Split-Path $pubKeyPath -Leaf), $dest) -ForegroundColor Green
+    Write-Host "서버 접속 비밀번호를 입력해 주세요." -ForegroundColor DarkGray
+    $remoteCmd = 'umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; k=$(cat); grep -qxF "$k" ~/.ssh/authorized_keys || echo "$k" >> ~/.ssh/authorized_keys'
+    Get-Content -LiteralPath $pubKeyPath -TotalCount 1 | & ssh @portArgs $dest $remoteCmd
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error ("공개키 등록에 실패했습니다 (exit code: {0})" -f $LASTEXITCODE)
+        return
+    }
+
+    # 4) 등록한 키로 실제 접속되는지 확인
+    $privKeyPath = $pubKeyPath -replace '\.pub$', ''
+    & ssh @portArgs -i $privKeyPath -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o ConnectTimeout=5 $dest exit 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host ("SSH 키 등록 완료 ({0})" -f $dest) -ForegroundColor Green
+    }
+    else {
+        Write-Host "키는 등록했지만 키 인증 확인에 실패했습니다. 서버의 sshd 설정(PubkeyAuthentication)을 확인해 주세요." -ForegroundColor Yellow
+    }
+}
+
+function rsa-pubkey # show ssh rsa-public key
+{
+    cat $env:HOMEPATH/.ssh/id_rsa.pub
+}
 
 function del-host {
+    # known_hosts에서 지정한 IP 항목을 삭제한다(자동 백업 생성).
     param(
         [Parameter(Mandatory = $true, Position = 0)]
         [string]$Ip
@@ -1139,82 +1487,14 @@ function del-host {
     Write-Host ("backup: {0}" -f $backup) -ForegroundColor DarkGray
 }
 
-function ssh-con {
-    param(
-        [Parameter(ValueFromRemainingArguments = $true)]
-        [string[]]$Args
-    )
+#########################################################
+# SSH 서버 선택 / 접속 영역 End
+#########################################################
 
-    if (-not (Get-Command tssh -ErrorAction SilentlyContinue)) {
-        Write-Error "tssh 명령을 찾지 못했습니다."
-        return
-    }
 
-    if (-not (Get-Variable SV -Scope Global -ErrorAction SilentlyContinue) -or
-        [string]::IsNullOrWhiteSpace($global:SV)) {
-        Write-Host "SV가 설정되지 않았습니다. 먼저 set-sshhost를 실행해 주세요." -ForegroundColor Yellow
-        return
-    }
-
-    $configPath = "$HOME/.ssh/config"
-
-    if ((Test-Path -LiteralPath $configPath) -and
-        (Get-Command Get-SshAliasesFromConfigFile -ErrorAction SilentlyContinue)) {
-
-        $visited = @{}
-        $rawEntries = Get-SshAliasesFromConfigFile -Path $configPath -Visited $visited
-
-        $aliases = $rawEntries |
-            ForEach-Object { $_.Alias } |
-            Sort-Object -Unique
-
-        $matched = $aliases |
-            Where-Object { $_ -ieq $global:SV } |
-            Select-Object -First 1
-
-        if (-not $matched) {
-            Write-Host ("현재 SV '{0}' 는 ssh config에 정의되어 있지 않습니다." -f $global:SV) -ForegroundColor Yellow
-            Write-Host "먼저 set-sshhost를 다시 실행해 주세요." -ForegroundColor Yellow
-            return
-        }
-    }
-
-    Write-Host ("connecting: tssh {0}" -f $global:SV) -ForegroundColor Green
-    & tssh $global:SV @Args
-}
-
-function ping-test {
-    $svipVar = Get-Variable SVIP -Scope Global -ErrorAction SilentlyContinue
-
-    if (-not $svipVar -or [string]::IsNullOrWhiteSpace($global:SVIP)) {
-        Write-Error "SVIP가 설정되어 있지 않습니다. 먼저 svpick으로 서버를 선택해 주세요."
-        return
-    }
-
-    $parsedIp = $null
-    if (-not [System.Net.IPAddress]::TryParse($global:SVIP, [ref]$parsedIp)) {
-        Write-Error ("SVIP 값이 올바른 IP 형식이 아닙니다: {0}" -f $global:SVIP)
-        return
-    }
-
-    & ping.exe -t $parsedIp.IPAddressToString
-}
-
-function sss {
-    # sss-picker-v5: 이전 선택값 제거는 Set-SshHost 시작 시 공통으로 처리한다.
-    # 새 서버를 선택하지 않으면 기존 SV를 재사용해 연결하지 않는다.
-    $selected = Set-SshHost
-
-    if (
-        -not $selected -or
-        -not (Get-Variable SV -Scope Global -ErrorAction SilentlyContinue) -or
-        [string]::IsNullOrWhiteSpace($global:SV)
-    ) {
-        return
-    }
-
-    ssh-con
-}
+#########################################################
+# SCP 파일 전송 (up/dn) 영역 Start
+#########################################################
 
 function Test-ScpReady {
     # fnc-ignore
@@ -1383,119 +1663,14 @@ Register-ArgumentCompleter -CommandName up, dn -ParameterName RemotePath -Script
     }
 }
 
-function auth
-{
-    param(
-        [Parameter(Position = 0)]
-        [string]$Target,
+#########################################################
+# SCP 파일 전송 (up/dn) 영역 End
+#########################################################
 
-        [Parameter(Position = 1)]
-        [int]$Port = 0
-    )
 
-    foreach ($cmd in 'ssh', 'ssh-keygen') {
-        if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
-            Write-Error ("{0} 명령을 찾을 수 없습니다. OpenSSH 클라이언트 설치를 확인해 주세요." -f $cmd)
-            return
-        }
-    }
-
-    # 접속 대상: 인자가 있으면 인자(계정@서버IP)를, 없으면 sss로 선택한 $SV를 사용한다.
-    $portArgs = @()
-    if ($Target) {
-        $dest = $Target
-        if ($Port -gt 0) { $portArgs = @('-p', $Port) }
-    }
-    elseif (-not [string]::IsNullOrWhiteSpace([string]$global:SV)) {
-        $dest = $global:SV
-        if ($Port -gt 0) { $portArgs = @('-p', $Port) }
-        elseif ($global:SVPORT) { $portArgs = @('-p', $global:SVPORT) }
-    }
-    else {
-        Write-Host "사용법: auth 계정@서버IP [포트]  (sss로 서버를 선택했다면 auth 만 입력)" -ForegroundColor Yellow
-        return
-    }
-
-    $sshDir = Join-Path $HOME '.ssh'
-    $pubKeys = @(Get-ChildItem -Path (Join-Path $sshDir '*.pub') -File -ErrorAction SilentlyContinue |
-        Where-Object { Test-Path -LiteralPath ($_.FullName -replace '\.pub$', '') })
-
-    # 1) 로컬 키 중 하나라도 이미 등록되어 있으면 바로 종료
-    foreach ($pub in $pubKeys) {
-        $priv = $pub.FullName -replace '\.pub$', ''
-        & ssh @portArgs -i $priv -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o ConnectTimeout=5 $dest exit 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host ("이미 SSH 키가 등록되어 있습니다: {0} ({1})" -f $dest, $pub.Name) -ForegroundColor Green
-            return
-        }
-    }
-
-    # 2) 사용할 키 결정: 없으면 생성, 하나면 그대로, 여러 개면 사용자에게 선택받기
-    if ($pubKeys.Count -eq 0) {
-        if (-not (Test-Path -LiteralPath $sshDir)) {
-            New-Item -ItemType Directory -Path $sshDir | Out-Null
-        }
-        $keyPath = Join-Path $sshDir 'id_ed25519'
-        $pubKeyPath = "$keyPath.pub"
-        if (Test-Path -LiteralPath $keyPath) {
-            # 개인키만 있고 .pub이 없는 경우: 개인키를 덮어쓰지 않고 공개키만 다시 뽑아낸다.
-            Write-Host ("기존 개인키에서 공개키를 복원합니다: {0}" -f $keyPath) -ForegroundColor Yellow
-            & ssh-keygen -y -f $keyPath | Set-Content -LiteralPath $pubKeyPath -Encoding ascii
-            if ($LASTEXITCODE -ne 0) {
-                Remove-Item -LiteralPath $pubKeyPath -ErrorAction SilentlyContinue
-                Write-Error "공개키 복원에 실패했습니다."
-                return
-            }
-        }
-        else {
-            Write-Host ("SSH 키가 없어 새로 생성합니다: {0}" -f $keyPath) -ForegroundColor Yellow
-            # PS 7.3 미만은 빈 문자열 인자가 네이티브 명령에 유실되므로 '""' 로 넘겨야 한다.
-            $emptyPass = if ($PSVersionTable.PSVersion -ge [version]'7.3') { '' } else { '""' }
-            & ssh-keygen -q -t ed25519 -f $keyPath -N $emptyPass
-            if ($LASTEXITCODE -ne 0) {
-                Write-Error "SSH 키 생성에 실패했습니다."
-                return
-            }
-        }
-    }
-    elseif ($pubKeys.Count -eq 1) {
-        $pubKeyPath = $pubKeys[0].FullName
-    }
-    else {
-        Write-Host "등록할 SSH 키를 선택해 주세요:" -ForegroundColor Cyan
-        for ($i = 0; $i -lt $pubKeys.Count; $i++) {
-            Write-Host ("  [{0}] {1}" -f ($i + 1), $pubKeys[$i].Name)
-        }
-        $choice = Read-Host ("번호 입력 (1-{0})" -f $pubKeys.Count)
-        $index = 0
-        if (-not [int]::TryParse($choice, [ref]$index) -or $index -lt 1 -or $index -gt $pubKeys.Count) {
-            Write-Host "잘못된 선택입니다. 취소합니다." -ForegroundColor Yellow
-            return
-        }
-        $pubKeyPath = $pubKeys[$index - 1].FullName
-    }
-
-    # 3) 공개키를 원격 authorized_keys에 추가 (이미 같은 줄이 있으면 건너뜀)
-    #    최초 접속이므로 여기서 서버 비밀번호를 물어본다.
-    Write-Host ("공개키 등록: {0} -> {1}" -f (Split-Path $pubKeyPath -Leaf), $dest) -ForegroundColor Green
-    Write-Host "서버 접속 비밀번호를 입력해 주세요." -ForegroundColor DarkGray
-    $remoteCmd = 'umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; k=$(cat); grep -qxF "$k" ~/.ssh/authorized_keys || echo "$k" >> ~/.ssh/authorized_keys'
-    Get-Content -LiteralPath $pubKeyPath -TotalCount 1 | & ssh @portArgs $dest $remoteCmd
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error ("공개키 등록에 실패했습니다 (exit code: {0})" -f $LASTEXITCODE)
-        return
-    }
-
-    # 4) 등록한 키로 실제 접속되는지 확인
-    $privKeyPath = $pubKeyPath -replace '\.pub$', ''
-    & ssh @portArgs -i $privKeyPath -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o ConnectTimeout=5 $dest exit 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host ("SSH 키 등록 완료 ({0})" -f $dest) -ForegroundColor Green
-    }
-    else {
-        Write-Host "키는 등록했지만 키 인증 확인에 실패했습니다. 서버의 sshd 설정(PubkeyAuthentication)을 확인해 주세요." -ForegroundColor Yellow
-    }
-}
+#########################################################
+# 터미널 세션 복제 (dup) 영역 Start
+#########################################################
 
 function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 우측 | -l 좌측 | -u 상단 | -d 하단, 기본 -r)
 {
@@ -1565,3 +1740,7 @@ function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 
         Write-Error ("pane 분할에 실패했습니다 (exit code: {0})" -f $LASTEXITCODE)
     }
 }
+
+#########################################################
+# 터미널 세션 복제 (dup) 영역 End
+#########################################################
