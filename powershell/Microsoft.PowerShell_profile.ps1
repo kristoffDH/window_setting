@@ -4,23 +4,33 @@
 
 # init 스크립트 캐시 헬퍼: 캐시 1행(# EXE=경로)에 exe 경로를 기록해 두고,
 # exe가 캐시보다 새로우면(업그레이드/재설치) 캐시를 다시 만든다.
+# DependentFiles(테마 등 init 결과에 영향을 주는 파일)가 캐시보다 새로울 때도 다시 만든다.
 # Get-Command는 세션 첫 호출이 ~200ms라 캐시가 유효한 동안에는 호출하지 않는다.
 function Update-InitCache {
     # fnc-ignore
     param(
         [string]$CachePath,
         [string]$Command,
-        [scriptblock]$Generate
+        [scriptblock]$Generate,
+        [string[]]$DependentFiles = @()
     )
 
     # 검사 경로는 cmdlet 초기화 비용(세션 첫 호출 수십 ms)을 피하려고 .NET API만 쓴다.
     $cacheValid = $false
     try {
         if ([System.IO.File]::Exists($CachePath)) {
+            $cacheTime = [System.IO.File]::GetLastWriteTime($CachePath)
             $exePath = ([System.IO.File]::ReadAllLines($CachePath)[0]) -replace '^# EXE=', ''
             $exeTime = [System.IO.File]::GetLastWriteTime($exePath)
-            $cacheValid = ($exeTime.Year -gt 1700) -and
-                ([System.IO.File]::GetLastWriteTime($CachePath) -gt $exeTime)
+            $cacheValid = ($exeTime.Year -gt 1700) -and ($cacheTime -gt $exeTime)
+
+            foreach ($dep in $DependentFiles) {
+                if ($cacheValid -and
+                    [System.IO.File]::Exists($dep) -and
+                    [System.IO.File]::GetLastWriteTime($dep) -ge $cacheTime) {
+                    $cacheValid = $false
+                }
+            }
         }
     }
     catch {
@@ -40,9 +50,12 @@ function Update-InitCache {
 # 주의: 스텁 안의 POSH_SESSION_ID는 exe가 init 때 테마와 함께 등록해 둔 값이므로
 # 그대로 재사용해야 한다. 다른 값으로 바꾸면 미등록 세션이라 기본 테마로 폴백한다.
 $omp_init_cache = "$env:LOCALAPPDATA\pwsh-init-omp.ps1"
+$omp_theme_file = "$HOME\.mytheme.omp.json"
 $omp_init_gen = { oh-my-posh init pwsh --config "$HOME/.mytheme.omp.json" }
 
-Update-InitCache -CachePath $omp_init_cache -Command 'oh-my-posh' -Generate $omp_init_gen
+# 테마를 고치면 새 창에서 자동 반영되도록 테마 파일도 캐시 유효성 검사에 포함한다.
+# (omp는 init 때 테마를 세션 캐시에 등록하므로, 스텁을 재사용하면 옛 테마가 남는다)
+Update-InitCache -CachePath $omp_init_cache -Command 'oh-my-posh' -Generate $omp_init_gen -DependentFiles $omp_theme_file
 
 # 캐시된 스텁에 세션 ID가 없거나(손상), 세션 ID에 연결된 omp 세션 캐시가 지워진
 # 경우(oh-my-posh cache clear 등)에는 스텁이 실행돼도 기본 테마로 폴백하므로 다시 만든다.
@@ -969,6 +982,16 @@ function Set-SshSelectionVars {
     $env:OMP_SV = $global:SV
     $env:OMP_SVPORT = $global:SVPORT
 
+    # ssh -G가 알려주는 접속 계정(User). config에 User가 없으면 로컬 계정명이 온다.
+    if ([string]::IsNullOrWhiteSpace($detail.User)) {
+        Remove-Variable SVID -Scope Global -ErrorAction SilentlyContinue
+        Remove-Item Env:OMP_SVID -ErrorAction SilentlyContinue
+    }
+    else {
+        $global:SVID = $detail.User
+        $env:OMP_SVID = $global:SVID
+    }
+
     # ssh -G 결과의 HostName을 실제 IP로 변환한 값만 SVIP에 저장한다.
     # IP 확인에 실패하면 이전 서버의 SVIP가 남지 않도록 제거한다.
     if ([string]::IsNullOrWhiteSpace($detail.IP)) {
@@ -984,15 +1007,17 @@ function Set-SshSelectionVars {
     $env:OMP_SVIP = $global:SVIP
 
     Show-SshSelectedScreen -Entry $Entry
-    Write-Host ("변수 설정 완료: `$SV={0}, `$SVIP={1}, `$SVPORT={2}" -f $global:SV, $global:SVIP, $global:SVPORT) -ForegroundColor Green
+    Write-Host ("변수 설정 완료: `$SV={0}, `$SVID={1}, `$SVIP={2}, `$SVPORT={3}" -f $global:SV, $global:SVID, $global:SVIP, $global:SVPORT) -ForegroundColor Green
 }
 
 function Clear-SshSelectionVars {
     # fnc-ignore
     Remove-Variable SV -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable SVID -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SVIP -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SVPORT -Scope Global -ErrorAction SilentlyContinue
     Remove-Item Env:OMP_SV -ErrorAction SilentlyContinue
+    Remove-Item Env:OMP_SVID -ErrorAction SilentlyContinue
     Remove-Item Env:OMP_SVIP -ErrorAction SilentlyContinue
     Remove-Item Env:OMP_SVPORT -ErrorAction SilentlyContinue
 }
@@ -1220,7 +1245,7 @@ function Read-SshPickerKey {
 # --- 사용자 명령 ---
 
 function Set-SshHost {
-    # ssh config의 Host를 선택해 $SV/$SVIP/$SVPORT 변수를 설정한다. (alias: svpick)
+    # ssh config의 Host를 선택해 $SV/$SVID/$SVIP/$SVPORT 변수를 설정한다. (alias: svpick)
     param(
         [Parameter(Position = 0)]
         [string]$Alias,
@@ -1825,7 +1850,7 @@ function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 
     # 세션 상태를 임시 스크립트에 담아 새 pane이 프로필 로드 후 실행하게 한다.
     # (프로필에 정의된 alias/function은 새 pane이 프로필을 읽으면서 자동 적용된다)
     $lines = [System.Collections.Generic.List[string]]::new()
-    foreach ($name in 'SV', 'SVIP') {
+    foreach ($name in 'SV', 'SVID', 'SVIP') {
         $var = Get-Variable $name -Scope Global -ErrorAction SilentlyContinue
         if ($var -and $null -ne $var.Value) {
             $lines.Add(("`$global:{0} = '{1}'" -f $name, ([string]$var.Value -replace "'", "''")))
@@ -1835,7 +1860,7 @@ function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 
     if ($svport -and $null -ne $svport.Value) {
         $lines.Add(("`$global:SVPORT = {0}" -f [int]$svport.Value))
     }
-    foreach ($name in 'OMP_SV', 'OMP_SVIP', 'OMP_SVPORT') {
+    foreach ($name in 'OMP_SV', 'OMP_SVID', 'OMP_SVIP', 'OMP_SVPORT') {
         $value = [Environment]::GetEnvironmentVariable($name)
         if ($value) {
             $lines.Add(("`$env:{0} = '{1}'" -f $name, ($value -replace "'", "''")))
