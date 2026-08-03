@@ -894,9 +894,14 @@ function Resolve-HostToIp {
 
 function Get-SshEffectiveConfig {
     # fnc-ignore
+    # 기본은 ssh -G(로컬 config 해석)만 수행한다. DNS 조회는 blocking이 길 수 있어
+    # -ResolveIp를 준 경우에만 한다. HostName이 IP 리터럴이면 조회 없이 바로 채운다.
+    # IpResolved: IP 확인을 시도했는지(성공/실패 무관) 여부. picker 표시 문구 구분용.
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Alias
+        [string]$Alias,
+
+        [switch]$ResolveIp
     )
 
     $output = & ssh -G $Alias 2>$null
@@ -905,6 +910,7 @@ function Get-SshEffectiveConfig {
             Alias        = $Alias
             HostName     = $Alias
             IP           = ''
+            IpResolved   = [bool]$ResolveIp
             Port         = '22'
             User         = ''
             IdentityFile = ''
@@ -938,12 +944,25 @@ function Get-SshEffectiveConfig {
     $user = Get-SshMapValue -Map $map -Key 'user' -Default ''
     $identityFile = Get-SshMapValue -Map $map -Key 'identityfile' -Default ''
     $proxyJump = Get-SshMapValue -Map $map -Key 'proxyjump' -Default ''
-    $ip = Resolve-HostToIp $hostName
+
+    $ip = ''
+    $ipResolved = $false
+    $parsedIp = $null
+
+    if ([System.Net.IPAddress]::TryParse($hostName, [ref]$parsedIp)) {
+        $ip = $parsedIp.IPAddressToString
+        $ipResolved = $true
+    }
+    elseif ($ResolveIp) {
+        $ip = Resolve-HostToIp $hostName
+        $ipResolved = $true
+    }
 
     return [pscustomobject]@{
         Alias        = $Alias
         HostName     = $hostName
         IP           = $ip
+        IpResolved   = $ipResolved
         Port         = $port
         User         = $user
         IdentityFile = $identityFile
@@ -953,15 +972,22 @@ function Get-SshEffectiveConfig {
 
 function Get-SshDetailCached {
     # fnc-ignore
+    # picker 탐색 중에는 -ResolveIp 없이 호출해 DNS 대기를 피하고,
+    # 서버를 확정(Enter/직접 지정)한 시점에만 -ResolveIp로 IP를 채워 캐시를 승격한다.
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Alias
+        [string]$Alias,
+
+        [switch]$ResolveIp
     )
 
     $key = $Alias.ToLowerInvariant()
 
     if (-not $script:SshPickerDetailCache.ContainsKey($key)) {
-        $script:SshPickerDetailCache[$key] = Get-SshEffectiveConfig -Alias $Alias
+        $script:SshPickerDetailCache[$key] = Get-SshEffectiveConfig -Alias $Alias -ResolveIp:$ResolveIp
+    }
+    elseif ($ResolveIp -and -not $script:SshPickerDetailCache[$key].IpResolved) {
+        $script:SshPickerDetailCache[$key] = Get-SshEffectiveConfig -Alias $Alias -ResolveIp
     }
 
     return $script:SshPickerDetailCache[$key]
@@ -974,7 +1000,8 @@ function Set-SshSelectionVars {
         [object]$Entry
     )
 
-    $detail = Get-SshDetailCached -Alias $Entry.Alias
+    # 선택 확정 시점이므로 여기서만 IP를 실제로 조회한다 (picker 탐색 중에는 조회 안 함).
+    $detail = Get-SshDetailCached -Alias $Entry.Alias -ResolveIp
 
     # 선택한 ssh Host 별칭
     $global:SV = $Entry.Alias
@@ -1110,7 +1137,10 @@ function Render-SshPicker {
 
     Write-Host ""
 
-    $ipText = if ([string]::IsNullOrWhiteSpace($detail.IP)) { '<DNS 해석 실패>' } else { $detail.IP }
+    # 탐색 중에는 DNS를 조회하지 않으므로, HostName이 IP가 아니면 미조회 상태로 표시한다.
+    $ipText = if (-not [string]::IsNullOrWhiteSpace($detail.IP)) { $detail.IP }
+        elseif ($detail.IpResolved) { '<DNS 해석 실패>' }
+        else { '(선택 시 조회)' }
 
     Write-Host "상세" -ForegroundColor Yellow
     Write-Host ("  Alias        : {0}" -f $detail.Alias)
