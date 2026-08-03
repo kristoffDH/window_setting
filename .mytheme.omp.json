@@ -22,7 +22,7 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": "{{ $tag := .Env.OMP_TAG }}{{ $sv := .Env.OMP_SV }}{{ $svip := .Env.OMP_SVIP }}{{ $svport := .Env.OMP_SVPORT }}{{ if or $tag $sv }} <#17d7a0></> <#FFFFFF>{{ if $tag }}{{ $tag }}{{ end }}{{ if and $tag $sv }} <#444444>|</> {{ end }}{{ if $sv }}<#E9C46A> </>SV : {{ $sv }}{{ end }}{{ if $svip }} <#444444>|</> <#4CC9F0> </>IP : {{ $svip }}{{ end }}{{ if $svport }} <#444444>|</> <#F4A261> </>PORT : {{ $svport }}{{ end }}</> {{ end }}"
+          "template": "{{ $tag := .Env.OMP_TAG }}{{ $sv := .Env.OMP_SV }}{{ $svid := .Env.OMP_SVID }}{{ $svip := .Env.OMP_SVIP }}{{ $svport := .Env.OMP_SVPORT }}{{ if or $tag $sv }} <#17d7a0></> <#FFFFFF>{{ if $tag }}{{ $tag }}{{ end }}{{ if and $tag $sv }} <#444444>|</> {{ end }}{{ if $sv }}<#E9C46A> </>SV : {{ $sv }}{{ end }}{{ if $svid }} <#444444>|</> <#C77DFF> </>ID : {{ $svid }}{{ end }}{{ if $svip }} <#444444>|</> <#4CC9F0> </>IP : {{ $svip }}{{ end }}{{ if $svport }} <#444444>|</> <#F4A261> </>PORT : {{ $svport }}{{ end }}</> {{ end }}"
         }
       ]
     },    
