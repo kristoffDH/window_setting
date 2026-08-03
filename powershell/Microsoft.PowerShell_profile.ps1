@@ -2,11 +2,76 @@
 # 셸 초기화 영역 Start - 로드 순서 중요
 #########################################################
 
-# oh-my-posh module
-oh-my-posh init pwsh --config $HOME/.mytheme.omp.json | Invoke-Expression
+# init 스크립트 캐시 헬퍼: 캐시 1행(# EXE=경로)에 exe 경로를 기록해 두고,
+# exe가 캐시보다 새로우면(업그레이드/재설치) 캐시를 다시 만든다.
+# Get-Command는 세션 첫 호출이 ~200ms라 캐시가 유효한 동안에는 호출하지 않는다.
+function Update-InitCache {
+    # fnc-ignore
+    param(
+        [string]$CachePath,
+        [string]$Command,
+        [scriptblock]$Generate
+    )
+
+    # 검사 경로는 cmdlet 초기화 비용(세션 첫 호출 수십 ms)을 피하려고 .NET API만 쓴다.
+    $cacheValid = $false
+    try {
+        if ([System.IO.File]::Exists($CachePath)) {
+            $exePath = ([System.IO.File]::ReadAllLines($CachePath)[0]) -replace '^# EXE=', ''
+            $exeTime = [System.IO.File]::GetLastWriteTime($exePath)
+            $cacheValid = ($exeTime.Year -gt 1700) -and
+                ([System.IO.File]::GetLastWriteTime($CachePath) -gt $exeTime)
+        }
+    }
+    catch {
+        $cacheValid = $false
+    }
+
+    if ($cacheValid) {
+        return
+    }
+
+    $exePath = (Get-Command $Command).Source
+    @("# EXE=$exePath") + (& $Generate) | Set-Content $CachePath -Encoding utf8
+}
+
+# oh-my-posh: init이 출력하는 스텁은 omp를 업그레이드하기 전까지 항상 같으므로
+# 파일로 캐시해 매 시작마다 exe를 띄우는 비용(~300ms)을 줄인다.
+# 주의: 스텁 안의 POSH_SESSION_ID는 exe가 init 때 테마와 함께 등록해 둔 값이므로
+# 그대로 재사용해야 한다. 다른 값으로 바꾸면 미등록 세션이라 기본 테마로 폴백한다.
+$omp_init_cache = "$env:LOCALAPPDATA\pwsh-init-omp.ps1"
+$omp_init_gen = { oh-my-posh init pwsh --config "$HOME/.mytheme.omp.json" }
+
+Update-InitCache -CachePath $omp_init_cache -Command 'oh-my-posh' -Generate $omp_init_gen
+
+# 캐시된 스텁에 세션 ID가 없거나(손상), 세션 ID에 연결된 omp 세션 캐시가 지워진
+# 경우(oh-my-posh cache clear 등)에는 스텁이 실행돼도 기본 테마로 폴백하므로 다시 만든다.
+$omp_stub_text = [System.IO.File]::ReadAllText($omp_init_cache)
+$omp_sid = [regex]::Match($omp_stub_text, 'POSH_SESSION_ID = "([^"]+)"').Groups[1].Value
+$omp_dir = [regex]::Match($omp_stub_text, "& '([^']+)\\init\.[^']+\.ps1'").Groups[1].Value
+
+if (-not $omp_sid -or ($omp_dir -and -not [System.IO.File]::Exists("$omp_dir\pwsh.$omp_sid.omp.cache"))) {
+    Remove-Item $omp_init_cache -ErrorAction SilentlyContinue
+    Update-InitCache -CachePath $omp_init_cache -Command 'oh-my-posh' -Generate $omp_init_gen
+}
+
+try {
+    . $omp_init_cache
+}
+catch {
+    # 캐시가 가리키는 omp 내부 init 파일이 사라진 경우: 캐시를 강제 재생성 후 다시 실행한다.
+    Remove-Item $omp_init_cache -ErrorAction SilentlyContinue
+    Update-InitCache -CachePath $omp_init_cache -Command 'oh-my-posh' -Generate $omp_init_gen
+    . $omp_init_cache
+}
 
 # zoxide는 프롬프트 함수를 감싸므로 oh-my-posh 초기화 이후에 실행해야 한다.
-Invoke-Expression (& { (zoxide init powershell | Out-String) })
+# init 출력은 zoxide 버전이 바뀌기 전까지 동일하므로 캐시해 exe 호출을 줄인다.
+$zoxide_init_cache = "$env:LOCALAPPDATA\pwsh-init-zoxide.ps1"
+
+Update-InitCache -CachePath $zoxide_init_cache -Command 'zoxide' -Generate { zoxide init powershell }
+
+. $zoxide_init_cache
 
 # PSReadLine
 Set-PSReadLineOption -PredictionSource History
