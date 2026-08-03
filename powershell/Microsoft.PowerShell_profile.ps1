@@ -206,6 +206,17 @@ function upload-omp
     Set-Location -Path $originalPath
 }
 
+function upload-term
+{
+    # Windows Terminal 설정 파일을 win_term 저장소에 복사해 커밋하고 푸시한다.
+    $originalPath = Get-Location
+    cd "C:\Users\hanssak\win_term\window_setting"
+    cp "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json" ./window-term.setting.json
+    ls;
+    git add .; git commit -m "update terminal"; git push;
+    Set-Location -Path $originalPath
+}
+
 #########################################################
 # 설정 파일 열기 / 백업 영역 End
 #########################################################
