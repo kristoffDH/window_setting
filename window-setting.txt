@@ -1,8 +1,30 @@
 
-* winget install 
+#########################################################
+# 새 PC 이관 절차 (요약)
+#########################################################
+# ① PowerShell 7 설치        > winget install Microsoft.PowerShell
+# ② Nerd Font 설치           > 이 폴더의 MesloLGSNerdFont-Regular.ttf 우클릭 - 설치
+# ③ oh-my-posh 단독 exe 설치 > 아래 "oh my posh" 항목 참고 (winget 금지!)
+# ④ zoxide / tssh 설치       > 아래 항목 참고
+# ⑤ 설정 복원
+#     git clone <win_term 저장소> $HOME\win_term
+#     New-Item -ItemType Directory -Force (Split-Path $PROFILE) | Out-Null
+#     Copy-Item $HOME\win_term\window_setting\powershell\Microsoft.PowerShell_profile.ps1 $PROFILE
+#     Copy-Item $HOME\win_term\omp-mytheme\.mytheme.omp.json $HOME\
+#     Copy-Item $HOME\win_term\window_setting\window-term.setting.json "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
+# ⑥ 새 터미널 열면 끝. init 캐시(%LOCALAPPDATA%\pwsh-init-*.ps1)는
+#    프로필이 첫 로드 때 자동 생성하므로 복사 금지/불필요.
+#
+# * 주의: upload-pwsh / upload-omp / upload-term 함수는 C:\Users\hanssak 경로가
+#   하드코딩되어 있어 사용자명이 다른 PC에서는 수정 필요.
+# * 백업(현재 PC → 저장소): upload-pwsh(프로필) / upload-omp(omp 테마) / upload-term(터미널 설정)
+#########################################################
+
+
+* winget install
     > https://sunyzero.tistory.com/271
 
-* Chocolatey 
+* Chocolatey
     > https://chocolatey.org/install
 
 * Scoop
@@ -12,36 +34,48 @@
 * lsd
     > scoop install lsd
     > choco install lsd
+    > 설정 파일: 이 폴더의 lsd-config.yml → $env:APPDATA\lsd\config.yaml
 
 * powershell config
     code $PROFILE.CurrentUserCurrentHost
 
-* oh my posh
-    > winget install JanDeDobbeleer.OhMyPosh
+* oh my posh (단독 exe 설치 - 2026-08 변경)
+    > (금지) winget install JanDeDobbeleer.OhMyPosh
+      → MSIX(스토어 패키지)로 설치되어 exe 스폰이 느려짐 (터미널 로드 ~1500ms,
+        재부팅 직후 2000ms+). 단독 exe면 ~576ms.
+    > GitHub 릴리스의 단독 exe를 받아 사용자 PATH에 등록:
+        $bin = "$env:LOCALAPPDATA\Programs\oh-my-posh\bin"
+        New-Item -ItemType Directory -Force $bin | Out-Null
+        Invoke-WebRequest 'https://github.com/JanDeDobbeleer/oh-my-posh/releases/latest/download/posh-windows-amd64.exe' -OutFile "$bin\oh-my-posh.exe"
+        [Environment]::SetEnvironmentVariable('Path', "$bin;" + [Environment]::GetEnvironmentVariable('Path','User'), 'User')
+    > 업데이트: oh-my-posh upgrade   (winget 업데이트 아님)
+    > 테마: $PROFILE이 ~/.mytheme.omp.json 을 자동 로드 (원본은 omp-mytheme 폴더)
+    > 현재 테마 내보내기: Export-PoshTheme -FilePath ~/.mytheme.omp.json -Format json
 
-    > Export Current theme 
-        Export-PoshTheme -FilePath ~/.mytheme.omp.json -Format json
+* zoxide (구 z module 대체)
+    > winget install ajeetdsouza.zoxide
+    > 초기화는 $PROFILE이 처리 (init 출력 캐시 방식)
 
-    > apply theme
-        oh-my-posh --init --shell pwsh --config C:\Users\krist\AppData\Local\Programs\oh-my-posh\themes\slimfat.omp.json | Invoke-Expression
+* tssh (trzsz-ssh, ssh 접속 함수 sss/ssh-con 에 필요)
+    > 저장소 루트의 trzsz.tar 사용 또는 https://github.com/trzsz/trzsz-ssh 릴리스
+    > PATH에 등록되어 있어야 함
 
-* Power Toys 
+* Power Toys
     > WinGet install powertoys
 
-* window therminal
+* window terminal
     > microsoft store에서 다운로드
+    > 설정 복원: 이 폴더의 window-term.setting.json →
+        $env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json
+    > 설정 백업: upload-term 함수 실행
 
 * window git
     > https://git-scm.com/downloads
 
-
-
 * window curl install
     > sudo choco install -y curl
-    
+
     > del alias:curl (이 명령어로 powershell에 기본 설정되어있는 curl 해제 필요)
-
-
 
 * powershell install module list
     > powershell sudo
@@ -52,9 +86,9 @@
 
     > yaml parser
         Install-Module powershell-yaml
-    
+
     > fzf
         Install-Module -Name PSFzf -Scope CurrentUser
 
     > z module
-        Install-Module -Name z
+        (zoxide로 대체됨 - 위 zoxide 항목 참고)
