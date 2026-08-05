@@ -199,10 +199,16 @@ function ssh-config
 
 function upload-pwsh
 {
-    # PowerShell 프로필을 win_term 저장소에 복사해 커밋하고 푸시한다.
+    # PowerShell 프로필(+ AllHosts 로더, 자동 로드 스크립트)을 win_term 저장소에 복사해 커밋하고 푸시한다.
     $originalPath = Get-Location
     cd "C:\Users\hanssak\win_term\window_setting\powershell"
     cp $profile ./
+    # profile.ps1(CurrentUserAllHosts 로더)과 자동 로드 폴더의 스크립트(fnc-extend.ps1 등)도 백업한다.
+    cp $profile.CurrentUserAllHosts ./
+    if (Test-Path 'C:\CorePlatform\99. pwsh script') {
+        $null = New-Item -ItemType Directory -Force -Path ./scripts
+        cp 'C:\CorePlatform\99. pwsh script\*.ps1' ./scripts/
+    }
     ls;
     git add .; git commit -m "update pwsh"; git push;
     Set-Location -Path $originalPath
@@ -563,7 +569,9 @@ function Show-MyPalette {
 }
 
 function fnc {
-    # PROFILE에 정의된 함수 목록을 프로필 영역별로 묶어 설명과 함께 출력한다.
+    # PROFILE에 정의된 함수 목록을 프로필 영역별로 묶어 설명과 함께 출력한다. (fnc <함수명>: 해당 함수만 표시)
+    param([string]$Name)
+
     $tokens = $null
     $errors = $null
 
@@ -645,6 +653,17 @@ function fnc {
         $seen[$_.Name] = $true
         return $true
     })
+
+    # 함수 이름이 지정되면 해당 함수만 남긴다. 없는 이름이면 에러 표시 후 전체 목록으로 진행한다.
+    if ($Name) {
+        $matched = @($items | Where-Object { $_.Name -eq $Name })
+        if ($matched.Count -gt 0) {
+            $items = $matched
+        }
+        else {
+            Write-Error "'$Name' 함수 이름이 없습니다. 전체 목록을 출력합니다."
+        }
+    }
 
     if ($items.Count -eq 0) {
         Write-Host "표시할 함수가 없습니다."
