@@ -203,11 +203,11 @@ function upload-pwsh
     $originalPath = Get-Location
     cd "C:\Users\hanssak\win_term\window_setting\powershell"
     cp $profile ./
-    # profile.ps1(CurrentUserAllHosts 로더)과 자동 로드 폴더의 스크립트(fnc-extend.ps1 등)도 백업한다.
+    # profile.ps1(CurrentUserAllHosts 로더)과 자동 로드 폴더($my_scripts_dir)의 스크립트도 백업한다.
     cp $profile.CurrentUserAllHosts ./
-    if (Test-Path 'C:\CorePlatform\99. pwsh script') {
+    if ($global:my_scripts_dir -and (Test-Path $global:my_scripts_dir)) {
         $null = New-Item -ItemType Directory -Force -Path ./scripts
-        cp 'C:\CorePlatform\99. pwsh script\*.ps1' ./scripts/
+        cp (Join-Path $global:my_scripts_dir '*.ps1') ./scripts/
     }
     ls;
     git add .; git commit -m "update pwsh"; git push;
