@@ -110,8 +110,6 @@ $his_file = "$history_backup_file_path/ConsoleHost_history.txt"
 Set-Alias ls lsd
 Set-Alias vi nvim
 Set-Alias grep findstr
-Set-Alias d dup
-Set-Alias p ping-test
 Set-Alias zz zi
 Set-Alias -Name cn -Value ssh-con
 
@@ -1512,7 +1510,7 @@ function xd {
 }
 
 function ping-test {
-    # 선택된 $SVIP로 ping을 계속 보낸다. (alias: p)
+    # 선택된 $SVIP로 ping을 계속 보낸다. (축약: p)
     $svipVar = Get-Variable SVIP -Scope Global -ErrorAction SilentlyContinue
 
     if (-not $svipVar -or [string]::IsNullOrWhiteSpace($global:SVIP)) {
@@ -1527,6 +1525,11 @@ function ping-test {
     }
 
     & ping.exe -t $parsedIp.IPAddressToString
+}
+
+function p {
+    # alias-fn: 선택된 $SVIP로 ping을 계속 보낸다. (= ping-test)
+    ping-test @args
 }
 
 function auth
@@ -2107,6 +2110,11 @@ function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 
         Remove-Item -LiteralPath $initPath -Force -ErrorAction SilentlyContinue
         Write-Error ("pane 분할에 실패했습니다 (exit code: {0})" -f $LASTEXITCODE)
     }
+}
+
+function d {
+    # alias-fn: 현재 세션을 복제해 화면 분할한다. (= dup, -r/-l/-u/-d 인자 그대로 전달)
+    dup @args
 }
 
 #########################################################
