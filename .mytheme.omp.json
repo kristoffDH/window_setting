@@ -32,6 +32,20 @@
       "newline": true,
       "segments": [
         {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#FFFFFF",
+          "background": "transparent",
+          "template": "{{ $dst := .Env.OMP_DST }}{{ $dstid := .Env.OMP_DSTID }}{{ $dstip := .Env.OMP_DSTIP }}{{ $dstport := .Env.OMP_DSTPORT }}{{ if $dst }} <#E76F51></> <#FFFFFF><#E76F51> </>DST : {{ $dst }}{{ if $dstid }} <#444444>|</> <#E76F51>  </>ID : {{ $dstid }}{{ end }}{{ if $dstip }} <#444444>|</> <#E76F51>  </>IP : {{ $dstip }}{{ end }}{{ if $dstport }} <#444444>|</> <#E76F51>  </>PORT : {{ $dstport }}{{ end }}</> {{ end }}"
+        }
+      ]
+    },
+    {
+      "type": "prompt",
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        {
           "type": "path",
           "style": "plain",
           "foreground": "#FFFFFF",
