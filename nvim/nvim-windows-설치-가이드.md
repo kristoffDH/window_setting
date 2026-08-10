@@ -49,7 +49,7 @@ notepad $env:LOCALAPPDATA\nvim\init.lua
 ```
 
 메모장이 열리면 아래 3번의 `init.lua` 내용을 붙여넣고 저장합니다.
-(이 저장소의 `nvim/init.lua`가 실제 사용 중인 원본 백업이므로 그 파일을 그대로 복사해도 됩니다.)
+(같은 폴더의 `init.lua`가 실제 사용 중인 원본 백업이므로 그 파일을 그대로 복사해도 됩니다.)
 
 ---
 
