@@ -195,32 +195,23 @@ function ssh-config
     code $Home/.ssh/config
 }
 
-function upload-pwsh
+function upload-cfg
 {
-    # PowerShell 프로필(+ AllHosts 로더, 자동 로드 스크립트)을 win_term 저장소에 복사해 커밋하고 푸시한다.
+    # PowerShell 프로필(+ 로더, 자동 로드 스크립트)과 oh-my-posh 테마를 win_term 저장소에 복사해 커밋하고 푸시한다.
+    # (구 upload-pwsh + upload-omp 통합 — omp-mytheme 별도 저장소는 window_setting에 병합됨, 2026-08-10)
     $originalPath = Get-Location
-    cd "C:\Users\hanssak\win_term\window_setting\powershell"
-    cp $profile ./
+    cd "C:\Users\hanssak\win_term\window_setting"
+    cp $profile ./powershell/
     # profile.ps1(CurrentUserAllHosts 로더)과 자동 로드 폴더($my_scripts_dir)의 스크립트도 백업한다.
-    cp $profile.CurrentUserAllHosts ./
+    cp $profile.CurrentUserAllHosts ./powershell/
     if ($global:my_scripts_dir -and (Test-Path $global:my_scripts_dir)) {
-        $null = New-Item -ItemType Directory -Force -Path ./scripts
-        cp (Join-Path $global:my_scripts_dir '*.ps1') ./scripts/
+        $null = New-Item -ItemType Directory -Force -Path ./powershell/scripts
+        cp (Join-Path $global:my_scripts_dir '*.ps1') ./powershell/scripts/
     }
+    # oh-my-posh 테마도 같은 저장소의 omp-mytheme 폴더로 복사한다.
+    cp $omp_config_file ./omp-mytheme/
     ls;
-    git add .; git commit -m "update pwsh"; git push;
-    Set-Location -Path $originalPath
-}
-
-function upload-omp
-{
-    # oh-my-posh 테마 파일을 win_term 저장소(omp-mytheme 폴더)에 복사해 커밋하고 푸시한다.
-    # omp-mytheme 별도 저장소는 window_setting에 히스토리째 병합됨 (2026-08-10).
-    $originalPath = Get-Location
-    cd "C:\Users\hanssak\win_term\window_setting\omp-mytheme"
-    cp $omp_config_file ./
-    ls;
-    git add .; git commit -m "update omp"; git push;
+    git add .; git commit -m "update cfg"; git push;
     Set-Location -Path $originalPath
 }
 
