@@ -1,0 +1,145 @@
+{
+  "$schema": "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/schema.json",
+  "version": 3,
+  "final_space": true,
+  "disable_notice": true,
+  "console_title_template": "{{ .Shell }} in {{ .Folder }}",
+
+  "transient_prompt": {
+    "foreground": "#FFFFFF",
+    "background": "transparent",
+    "template": "<#0092FF></>  <#3A86FF>[</> <#FFFFFF>{{ .PWD }}</> <#3A86FF>]</> "
+  },
+
+  "blocks": [
+    {
+      "type": "prompt",
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#FFFFFF",
+          "background": "transparent",
+          "template": "{{ $tag := .Env.OMP_TAG }}{{ $sv := .Env.OMP_SV }}{{ $svid := .Env.OMP_SVID }}{{ $svip := .Env.OMP_SVIP }}{{ $svport := .Env.OMP_SVPORT }}{{ if or $tag $sv }} <#17d7a0></> <#FFFFFF>{{ if $tag }}{{ $tag }}{{ end }}{{ if and $tag $sv }} <#444444>|</> {{ end }}{{ if $sv }}<#E9C46A> </>SV : {{ $sv }}{{ end }}{{ if $svid }} <#444444>|</> <#C77DFF> </>ID : {{ $svid }}{{ end }}{{ if $svip }} <#444444>|</> <#4CC9F0> </>IP : {{ $svip }}{{ end }}{{ if $svport }} <#444444>|</> <#F4A261> </>PORT : {{ $svport }}{{ end }}</> {{ end }}"
+        }
+      ]
+    },    
+    {
+      "type": "prompt",
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#FFFFFF",
+          "background": "transparent",
+          "template": "{{ $dst := .Env.OMP_DST }}{{ $dstid := .Env.OMP_DSTID }}{{ $dstip := .Env.OMP_DSTIP }}{{ $dstport := .Env.OMP_DSTPORT }}{{ if $dst }} <#E76F51></> <#FFFFFF><#E76F51> </>DST : {{ $dst }}{{ if $dstid }} <#444444>|</> <#E76F51>  </>ID : {{ $dstid }}{{ end }}{{ if $dstip }} <#444444>|</> <#E76F51>  </>IP : {{ $dstip }}{{ end }}{{ if $dstport }} <#444444>|</> <#E76F51>  </>PORT : {{ $dstport }}{{ end }}</> {{ end }}"
+        }
+      ]
+    },
+    {
+      "type": "prompt",
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        {
+          "type": "path",
+          "style": "plain",
+          "foreground": "#FFFFFF",
+          "background": "transparent",
+          "template": " <#0092FF></>  <#3A86FF>[</> <#FFFFFF>{{ .Path }}</> <#3A86FF>]</>  ",
+          "properties": {
+            "style": "full",
+            "right_format": "<#4CC9F0>%s</>"
+          }
+        },
+        {
+          "type": "git",
+          "style": "plain",
+          "foreground": "#FFFFFF",
+          "background": "transparent",
+          "template": " on <#1A921C></> <#FFFFFF>{{ .HEAD }}</>{{ if or (or (gt .Ahead 0) (gt .Behind 0)) (or (gt (add .Working.Added .Staging.Added) 0) (or (gt (add .Working.Modified .Staging.Modified) 0) (or (gt (add .Working.Deleted .Staging.Deleted) 0) (or (gt .Working.Untracked 0) (gt .StashCount 0))))) }} <#FFFFFF>(</> {{ if or (gt .Ahead 0) (gt .Behind 0) }}{{ if gt .Ahead 0 }}<#9AFF87>↑{{ .Ahead }}</> {{ end }}{{ if gt .Behind 0 }}<#FF2740>↓{{ .Behind }}</> {{ end }}{{ end }}{{ if gt (add .Working.Added .Staging.Added) 0 }}<#9AFF87> {{ add .Working.Added .Staging.Added }}</> {{ end }}{{ if gt (add .Working.Modified .Staging.Modified) 0 }}<#FF6B6B> {{ add .Working.Modified .Staging.Modified }}</> {{ end }}{{ if gt (add .Working.Deleted .Staging.Deleted) 0 }}<#FF2740> {{ add .Working.Deleted .Staging.Deleted }}</> {{ end }}{{ if gt .Working.Untracked 0 }}<#7E8BA3> {{ .Working.Untracked }}</> {{ end }}{{ if gt .StashCount 0 }}stash: {{ .StashCount }} {{ end }}<#FFFFFF>)</>{{ end }} ",
+          "properties": {
+            "fetch_status": true,
+            "display_status": true,
+            "fetch_upstream_icon": true,
+            "fetch_stash_count": true,
+            "branch_icon": "",
+            "branch_identical_icon": "",
+            "branch_ahead_icon": "",
+            "branch_behind_icon": "",
+            "branch_gone_icon": ""
+          }
+        }
+      ]
+    },
+
+    {
+      "type": "prompt",
+      "alignment": "right",
+      "overflow": "hide",
+      "segments": [
+        {
+          "type": "status",
+          "style": "plain",
+          "foreground": "#FFFFFF",
+          "background": "transparent",
+          "template": "<#FF2740> </>{{ .Code }} <#444444>|</> "
+        },
+        {
+          "type": "executiontime",
+          "style": "plain",
+          "foreground": "#FFFFFF",
+          "background": "transparent",
+          "template": "<#E9C46A> </>{{ .FormattedMs }} <#444444>|</> ",
+          "properties": {
+            "threshold": 3000,
+            "style": "austin"
+          }
+        },
+        {
+          "type": "time",
+          "style": "plain",
+          "foreground": "#FFFFFF",
+          "background": "transparent",
+          "template": "<#2EC4B6> </>{{ .CurrentDate | date .Format }}",
+          "properties": {
+            "time_format": "15:04:05"
+          }
+        }
+      ]
+    },
+
+    {
+      "type": "prompt",
+      "alignment": "left",
+      "newline": true,
+      "segments": [
+        {
+          "type": "shell",
+          "style": "plain",
+          "foreground": "#FFFFFF",
+          "background": "transparent",
+          "template": " <#2EC4B6></> <#FFFFFF>pwsh</> "
+        },
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#444444",
+          "background": "transparent",
+          "template": " | "
+        },
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#999999",
+          "background": "transparent",
+          "template": " {{ if gt .Code 0 }}<#FF2740></>{{ else }}{{ end }} "
+        }
+      ]
+    }
+  ]
+}
