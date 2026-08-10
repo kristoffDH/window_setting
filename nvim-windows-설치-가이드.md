@@ -13,18 +13,18 @@ winget으로 Neovim을 설치하고, lazy.nvim 기반 플러그인 구성(`init.
 PowerShell을 열고 아래 명령을 실행합니다.
 
 ```powershell
-winget install Neovim.Neovim Git.Git BurntSushi.ripgrep.MSVC sharkdp.fd zig.zig
+winget install Neovim.Neovim Git.Git BurntSushi.ripgrep.MSVC sharkdp.fd
 ```
 
 | 도구 | 필요한 이유 |
 |---|---|
-| Neovim | 에디터 본체 |
+| Neovim | 에디터 본체 (0.12+ — 내장 treesitter로 구문 하이라이팅 처리) |
 | Git | lazy.nvim(플러그인 매니저)이 플러그인을 `git clone`으로 설치 |
 | ripgrep, fd | telescope의 파일/텍스트 검색 백엔드 |
-| zig | nvim-treesitter가 구문 파서를 C 컴파일할 때 사용 (Windows에서 가장 간단한 컴파일러) |
 
 > 설치 후 **PowerShell을 재시작**해야 PATH가 반영됩니다.
-> 확인: `nvim --version`, `git --version`, `rg --version`, `zig version`
+> 확인: `nvim --version`, `git --version`, `rg --version`
+> (예전 가이드의 zig는 nvim-treesitter 파서 컴파일용이었는데, 해당 플러그인을 제거해 더 이상 필요 없습니다.)
 
 ### 1-1. Nerd Font 설치 (아이콘 폰트)
 
@@ -49,6 +49,7 @@ notepad $env:LOCALAPPDATA\nvim\init.lua
 ```
 
 메모장이 열리면 아래 3번의 `init.lua` 내용을 붙여넣고 저장합니다.
+(이 저장소의 `nvim/init.lua`가 실제 사용 중인 원본 백업이므로 그 파일을 그대로 복사해도 됩니다.)
 
 ---
 
@@ -86,17 +87,9 @@ require("lazy").setup({
     config = function() vim.cmd.colorscheme("tokyonight-night") end,
   },
 
-  -- 구문 하이라이팅
-  {
-    "nvim-treesitter/nvim-treesitter",
-    build = ":TSUpdate",
-    config = function()
-      require("nvim-treesitter.configs").setup({
-        ensure_installed = { "lua", "vim", "python", "javascript", "json", "markdown" },
-        highlight = { enable = true },
-      })
-    end,
-  },
+  -- 구문 하이라이팅: Neovim 0.12+ 내장 treesitter 사용 (markdown/lua/vim/c, 코드펜스 injection 포함).
+  -- nvim-treesitter(master 브랜치)는 동결되어 0.12와 비호환(구형 match 형식 → range nil 에러)이라 사용하지 않음.
+  -- python/js/json은 regex 문법으로 폴백 — 정밀 하이라이트가 필요해지면 main 브랜치로 재도입할 것.
 
   -- 퍼지 검색 (telescope)
   {
@@ -177,7 +170,7 @@ require("lazy").setup({
 
 | 증상 | 원인 / 해결 |
 |---|---|
-| treesitter 파서 컴파일 에러 | C 컴파일러 없음 → `zig version`으로 zig가 PATH에 있는지 확인. 안 되면 PowerShell 재시작 |
+| md 파일 열 때 `range (a nil value)` 에러 | 구버전 nvim-treesitter(master) 플러그인 잔재 → init.lua에서 플러그인 제거(내장 treesitter 사용) 후 nvim에서 `:Lazy clean` 실행 |
 | 아이콘이 네모(□)로 깨짐 | 터미널 글꼴이 Nerd Font가 아님 → Windows Terminal 글꼴 설정 확인 |
 | 색상이 이상함 | `vim.opt.termguicolors = true` 누락이거나 구형 cmd 콘솔 사용 → Windows Terminal 사용 |
 | telescope 검색이 안 됨 | ripgrep/fd 미설치 → `rg --version`, `fd --version` 확인 |
