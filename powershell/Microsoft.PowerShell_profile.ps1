@@ -214,9 +214,10 @@ function upload-pwsh
 
 function upload-omp
 {
-    # oh-my-posh 테마 파일을 win_term 저장소에 복사해 커밋하고 푸시한다.
+    # oh-my-posh 테마 파일을 win_term 저장소(omp-mytheme 폴더)에 복사해 커밋하고 푸시한다.
+    # omp-mytheme 별도 저장소는 window_setting에 히스토리째 병합됨 (2026-08-10).
     $originalPath = Get-Location
-    cd "C:\Users\hanssak\win_term\omp-mytheme"
+    cd "C:\Users\hanssak\win_term\window_setting\omp-mytheme"
     cp $omp_config_file ./
     ls;
     git add .; git commit -m "update omp"; git push;
@@ -1779,7 +1780,7 @@ function Test-ScpReady {
     return $true
 }
 
-function up # scp local -> remote ($SV)
+function up # scp local -> remote ($SV), 와일드카드(*.tar 등) 지원
 {
     param(
         [Parameter(Mandatory = $true, Position = 0)]
@@ -1791,24 +1792,44 @@ function up # scp local -> remote ($SV)
 
     if (-not (Test-ScpReady)) { return }
 
-    if (-not (Test-Path -LiteralPath $LocalPath)) {
-        Write-Error ("로컬 경로를 찾지 못했습니다: {0}" -f $LocalPath)
-        return
-    }
+    # PowerShell은 글롭을 자동 확장하지 않으므로, 와일드카드면 여기서 직접 확장해
+    # 매칭된 모든 항목을 한 번의 scp 호출로 보낸다.
+    if ([System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($LocalPath)) {
+        $resolved = @(Resolve-Path -Path $LocalPath -ErrorAction SilentlyContinue | ForEach-Object { $_.Path })
 
-    $resolved = (Resolve-Path -LiteralPath $LocalPath).Path
+        if ($resolved.Count -eq 0) {
+            Write-Error ("패턴과 일치하는 로컬 파일이 없습니다: {0}" -f $LocalPath)
+            return
+        }
+    }
+    else {
+        if (-not (Test-Path -LiteralPath $LocalPath)) {
+            Write-Error ("로컬 경로를 찾지 못했습니다: {0}" -f $LocalPath)
+            return
+        }
+
+        $resolved = @((Resolve-Path -LiteralPath $LocalPath).Path)
+    }
 
     # $SV는 ssh config 별칭이므로 User/IdentityFile은 config에서 가져오고 포트만 명시한다.
     $scpArgs = @('-P', $global:SVPORT)
 
-    if (Test-Path -LiteralPath $resolved -PathType Container) {
+    # 보낼 항목 중 디렉터리가 하나라도 있으면 -r을 붙인다.
+    if (@($resolved | Where-Object { Test-Path -LiteralPath $_ -PathType Container }).Count -gt 0) {
         $scpArgs += '-r'
     }
 
     $target = "{0}:{1}" -f $global:SV, $RemotePath
 
-    Write-Host ("upload: {0} -> {1} ({2}:{3})" -f $resolved, $target, $global:SVIP, $global:SVPORT) -ForegroundColor Green
-    & scp @scpArgs $resolved $target
+    if ($resolved.Count -eq 1) {
+        Write-Host ("upload: {0} -> {1} ({2}:{3})" -f $resolved[0], $target, $global:SVIP, $global:SVPORT) -ForegroundColor Green
+    }
+    else {
+        Write-Host ("upload: {0}개 항목 -> {1} ({2}:{3})" -f $resolved.Count, $target, $global:SVIP, $global:SVPORT) -ForegroundColor Green
+        $resolved | ForEach-Object { Write-Host ("  {0}" -f $_) -ForegroundColor DarkGray }
+    }
+
+    & scp @scpArgs @resolved $target
 
     if ($LASTEXITCODE -eq 0) {
         Write-Host "업로드 완료" -ForegroundColor Green
@@ -1830,12 +1851,15 @@ function dn # scp remote ($SV) -> $HOME/Downloads
     $downloadDir = Join-Path $HOME 'Downloads'
     $source = "{0}:{1}" -f $global:SV, $RemotePath
 
+    # 와일드카드(*.tar 등)면 원격 확장은 scp가 수행하므로 디렉터리 검사를 건너뛴다 (여러 파일 다운로드).
+    $hasWildcard = $RemotePath.IndexOfAny([char[]]@('*', '?')) -ge 0
+
     # 원격 경로가 디렉터리일 때만 -r을 붙인다.
     # 자동완성으로 고른 디렉터리는 ls -p 덕분에 끝에 / 가 붙어 있어 ssh 확인 없이 판별되고,
     # / 없이 직접 입력한 경로만 원격에서 test -d 로 확인한다.
-    $isDir = $RemotePath.EndsWith('/')
+    $isDir = -not $hasWildcard -and $RemotePath.EndsWith('/')
 
-    if (-not $isDir) {
+    if (-not $isDir -and -not $hasWildcard) {
         if ($RemotePath -eq '~') {
             $remoteTest = 'test -d "$HOME"'
         }
@@ -1889,10 +1913,13 @@ function rr # scp -3 remote ($SV) -> remote ($DST), 로컬 경유 전송 (대상
 
     if (-not (Test-ScpReady -RequireDst)) { return }
 
-    # 원본이 디렉터리일 때만 -r을 붙인다 (dn과 동일: 끝 / 또는 SV에서 test -d 확인).
-    $isDir = $SourcePath.EndsWith('/')
+    # 와일드카드(*.tar 등)면 원격 확장은 scp가 수행하므로 디렉터리 검사를 건너뛴다 (여러 파일 전송).
+    $hasWildcard = $SourcePath.IndexOfAny([char[]]@('*', '?')) -ge 0
 
-    if (-not $isDir) {
+    # 원본이 디렉터리일 때만 -r을 붙인다 (dn과 동일: 끝 / 또는 SV에서 test -d 확인).
+    $isDir = -not $hasWildcard -and $SourcePath.EndsWith('/')
+
+    if (-not $isDir -and -not $hasWildcard) {
         if ($SourcePath -eq '~') {
             $remoteTest = 'test -d "$HOME"'
         }
