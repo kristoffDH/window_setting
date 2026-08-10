@@ -272,7 +272,7 @@ function compact-his {
     Set-Content -LiteralPath $path -Value $result -Encoding utf8
 
     Write-Host ("history 정리 완료: {0} -> {1}" -f $lines.Count, $result.Count) -ForegroundColor Green
-    Write-Host ("backup: {0}.bak" -f $path) -ForegroundColor DarkGray
+    Write-Host ("backup: {0}.bak" -f $path) -ForegroundColor DarkCyan
 }
 
 #########################################################
@@ -697,7 +697,7 @@ function fnc {
 
         Write-Host ("{0,2}. {1}" -f $index, $item.Name.PadRight($nameWidth)) -NoNewline
         if ($item.Description) {
-            Write-Host ("  # {0}" -f $item.Description) -ForegroundColor Gray
+            Write-Host ("  # {0}" -f $item.Description) -ForegroundColor DarkCyan
         }
         else {
             Write-Host ""
@@ -1144,7 +1144,7 @@ function Render-SshPicker {
 
     $modeLabel = if ($Mode -eq 'DST') { ' [DST 대상]' } else { '' }
     Write-Host ("SSH Host Picker{0}  [{1}/{2}]" -f $modeLabel, ($Index + 1), $total) -ForegroundColor Cyan
-    Write-Host "↑/↓ 이동  Ctrl+↑/↓ 3칸 이동  Enter 선택  Esc 취소" -ForegroundColor DarkGray
+    Write-Host "↑/↓ 이동  Ctrl+↑/↓ 3칸 이동  Enter 선택  Esc 취소" -ForegroundColor DarkCyan
     Write-Host ""
 
     $visibleCount = [Math]::Min(11, $total)
@@ -1620,7 +1620,7 @@ function auth
     # 3) 공개키를 원격 authorized_keys에 추가 (이미 같은 줄이 있으면 건너뜀)
     #    최초 접속이므로 여기서 서버 비밀번호를 물어본다.
     Write-Host ("공개키 등록: {0} -> {1}" -f (Split-Path $pubKeyPath -Leaf), $dest) -ForegroundColor Green
-    Write-Host "서버 접속 비밀번호를 입력해 주세요." -ForegroundColor DarkGray
+    Write-Host "서버 접속 비밀번호를 입력해 주세요." -ForegroundColor Yellow
     $remoteCmd = 'umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; k=$(cat); grep -qxF "$k" ~/.ssh/authorized_keys || echo "$k" >> ~/.ssh/authorized_keys'
     Get-Content -LiteralPath $pubKeyPath -TotalCount 1 | & ssh @portArgs $dest $remoteCmd
     if ($LASTEXITCODE -ne 0) {
@@ -1723,7 +1723,7 @@ function del-host {
 
     if ($removedTokenCount -eq 0) {
         Write-Host ("삭제할 IP를 찾지 못했습니다: {0}" -f $Ip) -ForegroundColor Yellow
-        Write-Host ("backup: {0}" -f $backup) -ForegroundColor DarkGray
+        Write-Host ("backup: {0}" -f $backup) -ForegroundColor DarkCyan
         return
     }
 
@@ -1733,7 +1733,7 @@ function del-host {
     Write-Host ("삭제 완료: {0}" -f $Ip) -ForegroundColor Green
     Write-Host ("삭제된 항목 수: {0}" -f $removedTokenCount)
     Write-Host ("완전히 제거된 라인 수: {0}" -f $removedLineCount)
-    Write-Host ("backup: {0}" -f $backup) -ForegroundColor DarkGray
+    Write-Host ("backup: {0}" -f $backup) -ForegroundColor DarkCyan
 }
 
 #########################################################
@@ -1817,7 +1817,7 @@ function up # scp local -> remote ($SV), 와일드카드(*.tar 등) 지원
     }
     else {
         Write-Host ("upload: {0}개 항목 -> {1} ({2}:{3})" -f $resolved.Count, $target, $global:SVIP, $global:SVPORT) -ForegroundColor Green
-        $resolved | ForEach-Object { Write-Host ("  {0}" -f $_) -ForegroundColor DarkGray }
+        $resolved | ForEach-Object { Write-Host ("  {0}" -f $_) -ForegroundColor DarkCyan }
     }
 
     & scp @scpArgs @resolved $target
@@ -1869,7 +1869,7 @@ function dn # scp remote ($SV) -> $HOME/Downloads
 
     if ($isDir) {
         $scpArgs += '-r'
-        Write-Host "원격 디렉터리로 감지되어 -r 옵션으로 다운로드합니다." -ForegroundColor DarkGray
+        Write-Host "원격 디렉터리로 감지되어 -r 옵션으로 다운로드합니다." -ForegroundColor DarkCyan
     }
 
     Write-Host ("download: {0} -> {1} ({2}:{3})" -f $source, $downloadDir, $global:SVIP, $global:SVPORT) -ForegroundColor Green
@@ -1896,9 +1896,9 @@ function rr # scp -3 remote ($SV) -> remote ($DST), 로컬 경유 전송 (대상
     # 인자 없이 실행하면 사용법만 보여준다 (Mandatory 입력 프롬프트를 띄우지 않는다).
     if ([string]::IsNullOrWhiteSpace($SourcePath)) {
         Write-Host "사용법: rr <SV 원본경로> [DST 대상경로(기본 ~/)]" -ForegroundColor Yellow
-        Write-Host "  1) ss                  : 원본 서버(SV) 선택" -ForegroundColor Gray
-        Write-Host "  2) sd                  : 대상 서버(DST) 선택" -ForegroundColor Gray
-        Write-Host "  3) rr ~/a.txt ~/dir/   : Tab 자동완성 - 1번째 인자는 SV, 2번째 인자는 DST 경로" -ForegroundColor Gray
+        Write-Host "  1) ss                  : 원본 서버(SV) 선택" -ForegroundColor DarkCyan
+        Write-Host "  2) sd                  : 대상 서버(DST) 선택" -ForegroundColor DarkCyan
+        Write-Host "  3) rr ~/a.txt ~/dir/   : Tab 자동완성 - 1번째 인자는 SV, 2번째 인자는 DST 경로" -ForegroundColor DarkCyan
         return
     }
 
@@ -1931,7 +1931,7 @@ function rr # scp -3 remote ($SV) -> remote ($DST), 로컬 경유 전송 (대상
 
     if ($isDir) {
         $scpArgs += '-r'
-        Write-Host "원격 디렉터리로 감지되어 -r 옵션으로 전송합니다." -ForegroundColor DarkGray
+        Write-Host "원격 디렉터리로 감지되어 -r 옵션으로 전송합니다." -ForegroundColor DarkCyan
     }
 
     $source = "{0}:{1}" -f $global:SV, $SourcePath
@@ -2105,7 +2105,7 @@ function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 
         }
     }
     if ($global:SV) {
-        $lines.Add(("Write-Host 'dup: `$SV={0} 세션을 복제했습니다.' -ForegroundColor DarkGray" -f ([string]$global:SV -replace "'", "''")))
+        $lines.Add(("Write-Host 'dup: `$SV={0} 세션을 복제했습니다.' -ForegroundColor DarkCyan" -f ([string]$global:SV -replace "'", "''")))
     }
     $lines.Add('Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue')
 

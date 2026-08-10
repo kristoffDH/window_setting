@@ -142,7 +142,7 @@ function fnc-all {
 
         Write-Host ("{0,2}. {1}" -f $index, $item.Name.PadRight($nameWidth)) -NoNewline
         if ($item.Description) {
-            Write-Host ("  # {0}" -f $item.Description) -ForegroundColor Gray
+            Write-Host ("  # {0}" -f $item.Description) -ForegroundColor DarkCyan
         }
         else {
             Write-Host ""
