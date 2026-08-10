@@ -113,7 +113,7 @@ Set-Alias grep findstr
 Set-Alias d dup
 Set-Alias p ping-test
 Set-Alias zz zi
-Set-Alias -Name svpick -Value Set-SshHost -Scope Global
+Set-Alias -Name cn -Value ssh-con
 
 #########################################################
 # 전역 변수 / Alias 영역 End
@@ -639,10 +639,19 @@ function fnc {
             continue
         }
 
+        # 설명이 "alias-fn:"으로 시작하면 다른 함수를 편하게 쓰기 위한 래퍼 함수로 표시한다.
+        # 이런 함수는 소속 영역 대신 alias-function 묶음으로 모아서 보여준다.
+        $isAliasFn = $false
+        if ($text -match '(?i)^alias-fn\s*:\s*(.*)$') {
+            $isAliasFn = $true
+            $text = $matches[1].Trim()
+        }
+
         [pscustomobject]@{
             Name        = $func.Name
             Description = $text
             Offset      = $start
+            AliasFn     = $isAliasFn
         }
     }
 
@@ -677,12 +686,20 @@ function fnc {
     $index = 1
     $currentSection = $null
 
-    foreach ($item in $items) {
+    # alias-fn 래퍼는 소속 영역에서 빼서 alias-function 묶음으로 목록 마지막에 모아 보여준다.
+    $ordered = @($items | Where-Object { -not $_.AliasFn }) + @($items | Where-Object { $_.AliasFn })
+
+    foreach ($item in $ordered) {
         # 함수 시작 위치보다 앞에 있는 마지막 영역 배너가 소속 영역이다.
-        $section = ($sections | Where-Object { $_.Offset -lt $item.Offset } | Select-Object -Last 1).Title
+        $section = if ($item.AliasFn) {
+            'alias-function'
+        }
+        else {
+            ($sections | Where-Object { $_.Offset -lt $item.Offset } | Select-Object -Last 1).Title
+        }
         if (-not $section) { $section = '기타' }
 
-        if ($sections.Count -gt 0 -and $section -ne $currentSection) {
+        if (($sections.Count -gt 0 -or $item.AliasFn) -and $section -ne $currentSection) {
             $currentSection = $section
             Write-Host ""
             Write-Host ("[ {0} ]" -f $section) -ForegroundColor Yellow
@@ -1014,58 +1031,64 @@ function Get-SshDetailCached {
 
 function Set-SshSelectionVars {
     # fnc-ignore
+    # -Prefix 'SV'(기본)/'DST' — 같은 로직으로 해당 계열 변수($SV*/$DST*)와 OMP_* env를 설정한다.
     param(
         [Parameter(Mandatory = $true)]
-        [object]$Entry
+        [object]$Entry,
+
+        [ValidateSet('SV', 'DST')]
+        [string]$Prefix = 'SV'
     )
 
     # 선택 확정 시점이므로 여기서만 IP를 실제로 조회한다 (picker 탐색 중에는 조회 안 함).
     $detail = Get-SshDetailCached -Alias $Entry.Alias -ResolveIp
 
     # 선택한 ssh Host 별칭
-    $global:SV = $Entry.Alias
-    $global:SVPORT = [int]$detail.Port
-    $env:OMP_SV = $global:SV
-    $env:OMP_SVPORT = $global:SVPORT
+    Set-Variable -Name $Prefix -Value $Entry.Alias -Scope Global
+    Set-Variable -Name "${Prefix}PORT" -Value ([int]$detail.Port) -Scope Global
+    Set-Item -Path "Env:OMP_${Prefix}" -Value $Entry.Alias
+    Set-Item -Path "Env:OMP_${Prefix}PORT" -Value ([string][int]$detail.Port)
 
     # ssh -G가 알려주는 접속 계정(User). config에 User가 없으면 로컬 계정명이 온다.
     if ([string]::IsNullOrWhiteSpace($detail.User)) {
-        Remove-Variable SVID -Scope Global -ErrorAction SilentlyContinue
-        Remove-Item Env:OMP_SVID -ErrorAction SilentlyContinue
+        Remove-Variable "${Prefix}ID" -Scope Global -ErrorAction SilentlyContinue
+        Remove-Item "Env:OMP_${Prefix}ID" -ErrorAction SilentlyContinue
     }
     else {
-        $global:SVID = $detail.User
-        $env:OMP_SVID = $global:SVID
+        Set-Variable -Name "${Prefix}ID" -Value $detail.User -Scope Global
+        Set-Item -Path "Env:OMP_${Prefix}ID" -Value $detail.User
     }
 
-    # ssh -G 결과의 HostName을 실제 IP로 변환한 값만 SVIP에 저장한다.
-    # IP 확인에 실패하면 이전 서버의 SVIP가 남지 않도록 제거한다.
+    # ssh -G 결과의 HostName을 실제 IP로 변환한 값만 해당 계열 IP 변수에 저장한다.
+    # IP 확인에 실패하면 이전 서버의 값이 남지 않도록 제거한다.
     if ([string]::IsNullOrWhiteSpace($detail.IP)) {
-        Remove-Variable SVIP -Scope Global -ErrorAction SilentlyContinue
-        Remove-Item Env:OMP_SVIP -ErrorAction SilentlyContinue
+        Remove-Variable "${Prefix}IP" -Scope Global -ErrorAction SilentlyContinue
+        Remove-Item "Env:OMP_${Prefix}IP" -ErrorAction SilentlyContinue
 
-        Show-SshSelectedScreen -Entry $Entry
-        Write-Warning ("원격 IP를 확인하지 못해 `$SVIP를 설정하지 않았습니다. HostName: {0}" -f $detail.HostName)
+        Show-SshSelectedScreen -Entry $Entry -Mode $Prefix
+        Write-Warning ("원격 IP를 확인하지 못해 `${0}IP를 설정하지 않았습니다. HostName: {1}" -f $Prefix, $detail.HostName)
         return
     }
 
-    $global:SVIP = $detail.IP
-    $env:OMP_SVIP = $global:SVIP
+    Set-Variable -Name "${Prefix}IP" -Value $detail.IP -Scope Global
+    Set-Item -Path "Env:OMP_${Prefix}IP" -Value $detail.IP
 
-    Show-SshSelectedScreen -Entry $Entry
-    Write-Host ("변수 설정 완료: `$SV={0}, `$SVID={1}, `$SVIP={2}, `$SVPORT={3}" -f $global:SV, $global:SVID, $global:SVIP, $global:SVPORT) -ForegroundColor Green
+    Show-SshSelectedScreen -Entry $Entry -Mode $Prefix
+    Write-Host ("변수 설정 완료: `${0}={1}, `${0}ID={2}, `${0}IP={3}, `${0}PORT={4}" -f $Prefix, $Entry.Alias, $detail.User, $detail.IP, [int]$detail.Port) -ForegroundColor Green
 }
 
 function Clear-SshSelectionVars {
     # fnc-ignore
-    Remove-Variable SV -Scope Global -ErrorAction SilentlyContinue
-    Remove-Variable SVID -Scope Global -ErrorAction SilentlyContinue
-    Remove-Variable SVIP -Scope Global -ErrorAction SilentlyContinue
-    Remove-Variable SVPORT -Scope Global -ErrorAction SilentlyContinue
-    Remove-Item Env:OMP_SV -ErrorAction SilentlyContinue
-    Remove-Item Env:OMP_SVID -ErrorAction SilentlyContinue
-    Remove-Item Env:OMP_SVIP -ErrorAction SilentlyContinue
-    Remove-Item Env:OMP_SVPORT -ErrorAction SilentlyContinue
+    # -Prefix 'SV'(기본)/'DST' — 해당 계열 변수와 OMP_* env만 제거한다 (반대쪽 계열은 유지).
+    param(
+        [ValidateSet('SV', 'DST')]
+        [string]$Prefix = 'SV'
+    )
+
+    foreach ($suffix in '', 'ID', 'IP', 'PORT') {
+        Remove-Variable "$Prefix$suffix" -Scope Global -ErrorAction SilentlyContinue
+        Remove-Item "Env:OMP_$Prefix$suffix" -ErrorAction SilentlyContinue
+    }
 }
 
 # --- 선택기 UI ---
@@ -1119,7 +1142,9 @@ function Render-SshPicker {
         [object[]]$Entries,
 
         [Parameter(Mandatory = $true)]
-        [int]$Index
+        [int]$Index,
+
+        [string]$Mode = 'SV'
     )
 
     $detail = Get-SshDetailCached -Alias $Entries[$Index].Alias
@@ -1127,7 +1152,8 @@ function Render-SshPicker {
 
     [Console]::Clear()
 
-    Write-Host ("SSH Host Picker  [{0}/{1}]" -f ($Index + 1), $total) -ForegroundColor Cyan
+    $modeLabel = if ($Mode -eq 'DST') { ' [DST 대상]' } else { '' }
+    Write-Host ("SSH Host Picker{0}  [{1}/{2}]" -f $modeLabel, ($Index + 1), $total) -ForegroundColor Cyan
     Write-Host "↑/↓ 이동  Ctrl+↑/↓ 3칸 이동  Enter 선택  Esc 취소" -ForegroundColor DarkGray
     Write-Host ""
 
@@ -1176,14 +1202,16 @@ function Show-SshSelectedScreen {
     # fnc-ignore
     param(
         [Parameter(Mandatory = $true)]
-        [object]$Entry
+        [object]$Entry,
+
+        [string]$Mode = 'SV'
     )
 
     $detail = Get-SshDetailCached -Alias $Entry.Alias
 
     [Console]::Clear()
 
-    Write-Host "SSH Selected" -ForegroundColor Cyan
+    Write-Host ("SSH Selected{0}" -f $(if ($Mode -eq 'DST') { ' [DST 대상]' } else { '' })) -ForegroundColor Cyan
     Write-Host ""
 
     Write-Host "선택됨" -ForegroundColor Yellow
@@ -1294,17 +1322,22 @@ function Read-SshPickerKey {
 # --- 사용자 명령 ---
 
 function Set-SshHost {
-    # ssh config의 Host를 선택해 $SV/$SVID/$SVIP/$SVPORT 변수를 설정한다. (alias: svpick)
+    # ssh config의 Host를 선택해 $SV/$SVID/$SVIP/$SVPORT 변수를 설정한다. (축약: ss, -d: $DST 계열 설정 = sd)
     param(
         [Parameter(Position = 0)]
         [string]$Alias,
 
+        [Alias('d')][switch]$Dst,
+
         [string]$ConfigPath = "$HOME/.ssh/config"
     )
 
-    # 실행할 때마다 이전 선택값을 먼저 제거한다.
-    # 새 서버를 선택하지 않고 중단(Esc, Ctrl+C, 오류)하면 기존 SV가 남지 않는다.
-    Clear-SshSelectionVars
+    # -d(-Dst)면 rr 전송 대상인 DST 계열만, 아니면 SV 계열만 다룬다 (반대쪽 계열은 유지).
+    $prefix = if ($Dst) { 'DST' } else { 'SV' }
+
+    # 실행할 때마다 이전 선택값(해당 계열만)을 먼저 제거한다.
+    # 새 서버를 선택하지 않고 중단(Esc, Ctrl+C, 오류)하면 기존 값이 남지 않는다.
+    Clear-SshSelectionVars -Prefix $prefix
 
     if (-not (Get-Command ssh -ErrorAction SilentlyContinue)) {
         throw "ssh 명령을 찾지 못했습니다. OpenSSH Client가 설치되어 있어야 합니다."
@@ -1343,7 +1376,7 @@ function Set-SshHost {
             return
         }
 
-        Set-SshSelectionVars -Entry $matchedEntry
+        Set-SshSelectionVars -Entry $matchedEntry -Prefix $prefix
         return $true
     }
 
@@ -1353,7 +1386,7 @@ function Set-SshHost {
     $index = 0
 
     while ($true) {
-        Render-SshPicker -Entries $entries.ToArray() -Index $index
+        Render-SshPicker -Entries $entries.ToArray() -Index $index -Mode $prefix
 
         $pickerKey = Read-SshPickerKey
         switch ($pickerKey) {
@@ -1375,7 +1408,7 @@ function Set-SshHost {
 
             'Enter' {
                 $selected = $entries[$index]
-                Set-SshSelectionVars -Entry $selected
+                Set-SshSelectionVars -Entry $selected -Prefix $prefix
                 return $true
             }
 
@@ -1388,32 +1421,35 @@ function Set-SshHost {
     }
 }
 
-function sss {
-    # 서버를 선택한 뒤 바로 tssh로 접속한다.
-    # sss-picker-v5: 이전 선택값 제거는 Set-SshHost 시작 시 공통으로 처리한다.
-    # 새 서버를 선택하지 않으면 기존 SV를 재사용해 연결하지 않는다.
-    $selected = Set-SshHost
+function ss {
+    # alias-fn: 원본 서버(SV)를 선택한다. (= set-sshhost, 접속은 cn)
+    param(
+        [Parameter(Position = 0)]
+        [string]$Alias
+    )
 
-    if (
-        -not $selected -or
-        -not (Get-Variable SV -Scope Global -ErrorAction SilentlyContinue) -or
-        [string]::IsNullOrWhiteSpace($global:SV)
-    ) {
-        return
-    }
+    $null = Set-SshHost -Alias $Alias
+}
 
-    ssh-con
+function sd {
+    # alias-fn: rr 전송 대상(DST) 서버를 선택한다. (= set-sshhost -d)
+    param(
+        [Parameter(Position = 0)]
+        [string]$Alias
+    )
+
+    $null = Set-SshHost -Dst -Alias $Alias
 }
 
 function ssh-con {
-    # 선택된 $SV 서버에 tssh로 접속한다.
+    # 선택된 $SV 서버에 ssh로 접속한다. (alias: cn)
     param(
         [Parameter(ValueFromRemainingArguments = $true)]
         [string[]]$Args
     )
 
-    if (-not (Get-Command tssh -ErrorAction SilentlyContinue)) {
-        Write-Error "tssh 명령을 찾지 못했습니다."
+    if (-not (Get-Command ssh -ErrorAction SilentlyContinue)) {
+        Write-Error "ssh 명령을 찾지 못했습니다. OpenSSH Client가 설치되어 있어야 합니다."
         return
     }
 
@@ -1446,15 +1482,33 @@ function ssh-con {
         }
     }
 
-    Write-Host ("connecting: tssh {0}" -f $global:SV) -ForegroundColor Green
-    & tssh $global:SV @Args
+    Write-Host ("connecting: ssh {0}" -f $global:SV) -ForegroundColor Green
+    & ssh $global:SV @Args
 }
 
 function clear-sv {
-    # fnc-ignore
+    # 선택된 SV 계열 변수($SV/$SVID/$SVIP/$SVPORT)를 해제한다. (-d: DST 계열만 해제, 축약: xs/xd)
+    param([Alias('d')][switch]$Dst)
+
+    if ($Dst) {
+        Clear-SshSelectionVars -Prefix DST
+        Write-Host "DST 정보 제거 완료" -ForegroundColor Yellow
+        return
+    }
+
     Clear-SshSelectionVars
 
     Write-Host "SV 정보 제거 완료" -ForegroundColor Yellow
+}
+
+function xs {
+    # alias-fn: 선택된 SV 계열 변수를 해제한다. (= clear-sv)
+    clear-sv
+}
+
+function xd {
+    # alias-fn: 선택된 DST 계열 변수를 해제한다. (= clear-sv -d)
+    clear-sv -d
 }
 
 function ping-test {
@@ -1462,7 +1516,7 @@ function ping-test {
     $svipVar = Get-Variable SVIP -Scope Global -ErrorAction SilentlyContinue
 
     if (-not $svipVar -or [string]::IsNullOrWhiteSpace($global:SVIP)) {
-        Write-Error "SVIP가 설정되어 있지 않습니다. 먼저 svpick으로 서버를 선택해 주세요."
+        Write-Error "SVIP가 설정되어 있지 않습니다. 먼저 ss로 서버를 선택해 주세요."
         return
     }
 
@@ -1693,22 +1747,28 @@ function del-host {
 
 
 #########################################################
-# SCP 파일 전송 (up/dn) 영역 Start
+# SCP 파일 전송 (up/dn/rr) 영역 Start
 #########################################################
 
 function Test-ScpReady {
     # fnc-ignore
-    # up/dn 실행 전 scp 존재 여부와 $SV, $SVIP, $SVPORT 설정 여부를 확인한다.
+    # up/dn/rr 실행 전 scp 존재 여부와 $SV 계열(-RequireDst면 $DST 계열까지) 설정 여부를 확인한다.
+    param([switch]$RequireDst)
+
     if (-not (Get-Command scp -ErrorAction SilentlyContinue)) {
         Write-Error "scp 명령을 찾지 못했습니다. OpenSSH Client가 설치되어 있어야 합니다."
         return $false
     }
 
-    foreach ($name in 'SV', 'SVIP', 'SVPORT') {
+    $names = @('SV', 'SVIP', 'SVPORT')
+    if ($RequireDst) { $names += 'DST', 'DSTIP', 'DSTPORT' }
+
+    foreach ($name in $names) {
         $var = Get-Variable $name -Scope Global -ErrorAction SilentlyContinue
 
         if (-not $var -or [string]::IsNullOrWhiteSpace([string]$var.Value)) {
-            Write-Host ("`${0}가 설정되지 않았습니다. 먼저 sss로 서버를 선택해 주세요." -f $name) -ForegroundColor Yellow
+            $hint = if ($name.StartsWith('DST')) { 'sd로 대상 서버를' } else { 'ss로 서버를' }
+            Write-Host ("`${0}가 설정되지 않았습니다. 먼저 {1} 선택해 주세요." -f $name, $hint) -ForegroundColor Yellow
             return $false
         }
     }
@@ -1805,20 +1865,84 @@ function dn # scp remote ($SV) -> $HOME/Downloads
     }
 }
 
-# up/dn 원격 경로 자동완성: Tab을 누를 때마다 ssh로 원격 디렉터리 목록을 조회한다. (캐시 없음)
-# up은 업로드 대상이므로 디렉터리만, dn은 파일/디렉터리 모두 후보로 보여준다.
-Register-ArgumentCompleter -CommandName up, dn -ParameterName RemotePath -ScriptBlock {
-    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+function rr # scp -3 remote ($SV) -> remote ($DST), 로컬 경유 전송 (대상 선택: sd)
+{
+    param(
+        [Parameter(Position = 0)]
+        [string]$SourcePath,
 
-    $sv = Get-Variable SV -Scope Global -ErrorAction SilentlyContinue
-    $svport = Get-Variable SVPORT -Scope Global -ErrorAction SilentlyContinue
+        [Parameter(Position = 1)]
+        [string]$DestPath = '~/'
+    )
 
-    if (-not $sv -or [string]::IsNullOrWhiteSpace([string]$sv.Value) -or
-        -not $svport -or [string]::IsNullOrWhiteSpace([string]$svport.Value)) {
+    # 인자 없이 실행하면 사용법만 보여준다 (Mandatory 입력 프롬프트를 띄우지 않는다).
+    if ([string]::IsNullOrWhiteSpace($SourcePath)) {
+        Write-Host "사용법: rr <SV 원본경로> [DST 대상경로(기본 ~/)]" -ForegroundColor Yellow
+        Write-Host "  1) ss                  : 원본 서버(SV) 선택" -ForegroundColor Gray
+        Write-Host "  2) sd                  : 대상 서버(DST) 선택" -ForegroundColor Gray
+        Write-Host "  3) rr ~/a.txt ~/dir/   : Tab 자동완성 - 1번째 인자는 SV, 2번째 인자는 DST 경로" -ForegroundColor Gray
         return
     }
 
-    $word = $wordToComplete.Trim("'`"")
+    if (-not (Test-ScpReady -RequireDst)) { return }
+
+    # 원본이 디렉터리일 때만 -r을 붙인다 (dn과 동일: 끝 / 또는 SV에서 test -d 확인).
+    $isDir = $SourcePath.EndsWith('/')
+
+    if (-not $isDir) {
+        if ($SourcePath -eq '~') {
+            $remoteTest = 'test -d "$HOME"'
+        }
+        elseif ($SourcePath.StartsWith('~/')) {
+            $remoteTest = 'test -d "$HOME/' + $SourcePath.Substring(2) + '"'
+        }
+        else {
+            $remoteTest = 'test -d "' + $SourcePath + '"'
+        }
+
+        & ssh -o BatchMode=yes -o ConnectTimeout=3 -p $global:SVPORT $global:SV $remoteTest 2>$null
+        $isDir = ($LASTEXITCODE -eq 0)
+    }
+
+    # -3: 내 PC가 양쪽에 접속해 중계한다 (서버끼리 직접 신뢰 관계 불필요, scp 진행률 표시 없음).
+    # 포트는 양쪽이 다를 수 있어 -P를 쓰지 않는다 — SV/DST 모두 ssh config 별칭이라 config가 공급한다.
+    $scpArgs = @('-3')
+
+    if ($isDir) {
+        $scpArgs += '-r'
+        Write-Host "원격 디렉터리로 감지되어 -r 옵션으로 전송합니다." -ForegroundColor DarkGray
+    }
+
+    $source = "{0}:{1}" -f $global:SV, $SourcePath
+    $target = "{0}:{1}" -f $global:DST, $DestPath
+
+    Write-Host ("transfer: {0} -> {1} ({2} -> {3}, 로컬 경유)" -f $source, $target, $global:SVIP, $global:DSTIP) -ForegroundColor Green
+    & scp @scpArgs $source $target
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "전송 완료" -ForegroundColor Green
+    }
+    else {
+        Write-Error ("전송 실패 (exit code: {0})" -f $LASTEXITCODE)
+    }
+}
+
+# up/dn/rr 원격 경로 자동완성 공용: Tab을 누를 때마다 ssh로 원격 디렉터리 목록을 조회한다. (캐시 없음)
+function Get-SshRemotePathCompletion {
+    # fnc-ignore
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$HostAlias,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Port,
+
+        [string]$WordToComplete = '',
+
+        [switch]$DirOnly
+    )
+
+    $word = $WordToComplete.Trim("'`"")
 
     # 입력값을 "디렉터리 부분 + 이름 접두어"로 분리
     $slash = $word.LastIndexOf('/')
@@ -1837,17 +1961,15 @@ Register-ArgumentCompleter -CommandName up, dn -ParameterName RemotePath -Script
         $remoteCmd = 'ls -1ap -- "' + $dir + '"'
     }
 
-    $items = & ssh -o BatchMode=yes -o ConnectTimeout=3 -p $svport.Value $sv.Value "$remoteCmd 2>/dev/null" 2>$null
+    $items = & ssh -o BatchMode=yes -o ConnectTimeout=3 -p $Port $HostAlias "$remoteCmd 2>/dev/null" 2>$null
 
     if ($LASTEXITCODE -ne 0 -or -not $items) {
         return
     }
 
-    $dirOnly = ($commandName -eq 'up')
-
     foreach ($item in $items) {
         if ($item -in './', '../') { continue }
-        if ($dirOnly -and -not $item.EndsWith('/')) { continue }
+        if ($DirOnly -and -not $item.EndsWith('/')) { continue }
         if ($prefix -and -not $item.StartsWith($prefix, [System.StringComparison]::Ordinal)) { continue }
 
         # ls -p 덕분에 디렉터리는 끝에 / 가 붙어 이어서 탐색할 수 있다.
@@ -1863,8 +1985,52 @@ Register-ArgumentCompleter -CommandName up, dn -ParameterName RemotePath -Script
     }
 }
 
+# up은 업로드 대상이므로 디렉터리만, dn은 파일/디렉터리 모두 후보로 보여준다.
+Register-ArgumentCompleter -CommandName up, dn -ParameterName RemotePath -ScriptBlock {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+    $sv = Get-Variable SV -Scope Global -ErrorAction SilentlyContinue
+    $svport = Get-Variable SVPORT -Scope Global -ErrorAction SilentlyContinue
+
+    if (-not $sv -or [string]::IsNullOrWhiteSpace([string]$sv.Value) -or
+        -not $svport -or [string]::IsNullOrWhiteSpace([string]$svport.Value)) {
+        return
+    }
+
+    Get-SshRemotePathCompletion -HostAlias $sv.Value -Port ([string]$svport.Value) -WordToComplete $wordToComplete -DirOnly:($commandName -eq 'up')
+}
+
+# rr 첫 인자(원본)는 SV 기준 파일+디렉터리, 둘째 인자(대상)는 DST 기준 디렉터리만 보여준다.
+Register-ArgumentCompleter -CommandName rr -ParameterName SourcePath -ScriptBlock {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+    $sv = Get-Variable SV -Scope Global -ErrorAction SilentlyContinue
+    $svport = Get-Variable SVPORT -Scope Global -ErrorAction SilentlyContinue
+
+    if (-not $sv -or [string]::IsNullOrWhiteSpace([string]$sv.Value) -or
+        -not $svport -or [string]::IsNullOrWhiteSpace([string]$svport.Value)) {
+        return
+    }
+
+    Get-SshRemotePathCompletion -HostAlias $sv.Value -Port ([string]$svport.Value) -WordToComplete $wordToComplete
+}
+
+Register-ArgumentCompleter -CommandName rr -ParameterName DestPath -ScriptBlock {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+    $dst = Get-Variable DST -Scope Global -ErrorAction SilentlyContinue
+    $dstport = Get-Variable DSTPORT -Scope Global -ErrorAction SilentlyContinue
+
+    if (-not $dst -or [string]::IsNullOrWhiteSpace([string]$dst.Value) -or
+        -not $dstport -or [string]::IsNullOrWhiteSpace([string]$dstport.Value)) {
+        return
+    }
+
+    Get-SshRemotePathCompletion -HostAlias $dst.Value -Port ([string]$dstport.Value) -WordToComplete $wordToComplete -DirOnly
+}
+
 #########################################################
-# SCP 파일 전송 (up/dn) 영역 End
+# SCP 파일 전송 (up/dn/rr) 영역 End
 #########################################################
 
 
@@ -1899,17 +2065,19 @@ function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 
     # 세션 상태를 임시 스크립트에 담아 새 pane이 프로필 로드 후 실행하게 한다.
     # (프로필에 정의된 alias/function은 새 pane이 프로필을 읽으면서 자동 적용된다)
     $lines = [System.Collections.Generic.List[string]]::new()
-    foreach ($name in 'SV', 'SVID', 'SVIP') {
+    foreach ($name in 'SV', 'SVID', 'SVIP', 'DST', 'DSTID', 'DSTIP') {
         $var = Get-Variable $name -Scope Global -ErrorAction SilentlyContinue
         if ($var -and $null -ne $var.Value) {
             $lines.Add(("`$global:{0} = '{1}'" -f $name, ([string]$var.Value -replace "'", "''")))
         }
     }
-    $svport = Get-Variable SVPORT -Scope Global -ErrorAction SilentlyContinue
-    if ($svport -and $null -ne $svport.Value) {
-        $lines.Add(("`$global:SVPORT = {0}" -f [int]$svport.Value))
+    foreach ($name in 'SVPORT', 'DSTPORT') {
+        $port = Get-Variable $name -Scope Global -ErrorAction SilentlyContinue
+        if ($port -and $null -ne $port.Value) {
+            $lines.Add(("`$global:{0} = {1}" -f $name, [int]$port.Value))
+        }
     }
-    foreach ($name in 'OMP_SV', 'OMP_SVID', 'OMP_SVIP', 'OMP_SVPORT') {
+    foreach ($name in 'OMP_SV', 'OMP_SVID', 'OMP_SVIP', 'OMP_SVPORT', 'OMP_DST', 'OMP_DSTID', 'OMP_DSTIP', 'OMP_DSTPORT') {
         $value = [Environment]::GetEnvironmentVariable($name)
         if ($value) {
             $lines.Add(("`$env:{0} = '{1}'" -f $name, ($value -replace "'", "''")))
