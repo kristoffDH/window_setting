@@ -1431,6 +1431,42 @@ function sd {
     $null = Set-SshHost -Dst -Alias $Alias
 }
 
+# ss/sd/set-sshhost 별칭 자동완성: ssh config의 Host 목록을 후보로 보여준다. (config 파싱만, 네트워크 조회 없음)
+Register-ArgumentCompleter -CommandName ss, sd, Set-SshHost -ParameterName Alias -ScriptBlock {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+    $configPath = "$HOME/.ssh/config"
+
+    if (-not (Test-Path -LiteralPath $configPath) -or
+        -not (Get-Command Get-SshAliasesFromConfigFile -ErrorAction SilentlyContinue)) {
+        return
+    }
+
+    $word = $wordToComplete.Trim("'`"")
+    $visited = @{}
+    $seen = @{}
+
+    # picker와 같은 순서(config 기재 순) + 중복 제거로 후보를 만든다.
+    foreach ($entry in Get-SshAliasesFromConfigFile -Path $configPath -Visited $visited) {
+        $alias = $entry.Alias
+        $key = $alias.ToLowerInvariant()
+
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+
+        if ($word -and -not $alias.StartsWith($word, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+
+        $completionText = if ($alias -match '\s') { "'$alias'" } else { $alias }
+
+        [System.Management.Automation.CompletionResult]::new(
+            $completionText,
+            $alias,
+            [System.Management.Automation.CompletionResultType]::ParameterValue,
+            $alias
+        )
+    }
+}
+
 function ssh-con {
     # 선택된 $SV 서버에 ssh로 접속한다. (alias: cn)
     param(
