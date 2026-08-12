@@ -111,7 +111,7 @@ Set-Alias ls lsd
 Set-Alias vi nvim
 Set-Alias grep findstr
 Set-Alias zz zi
-Set-Alias -Name cn -Value ssh-con
+Set-Alias -Name c -Value ssh-con
 
 #########################################################
 # 전역 변수 / Alias 영역 End
@@ -1412,7 +1412,7 @@ function Set-SshHost {
 }
 
 function ss {
-    # alias-fn: 원본 서버(SV)를 선택한다. (= set-sshhost, 접속은 cn)
+    # alias-fn: 원본 서버(SV)를 선택한다. (= set-sshhost, 접속은 c)
     param(
         [Parameter(Position = 0)]
         [string]$Alias
@@ -1468,7 +1468,7 @@ Register-ArgumentCompleter -CommandName ss, sd, Set-SshHost -ParameterName Alias
 }
 
 function ssh-con {
-    # 선택된 $SV 서버에 ssh로 접속한다. (alias: cn)
+    # 선택된 $SV 서버에 ssh로 접속한다. (alias: c)
     param(
         [Parameter(ValueFromRemainingArguments = $true)]
         [string[]]$Args
