@@ -1601,7 +1601,7 @@ function auth
     # 1) 로컬 키 중 하나라도 이미 등록되어 있으면 바로 종료
     foreach ($pub in $pubKeys) {
         $priv = $pub.FullName -replace '\.pub$', ''
-        & ssh @portArgs -i $priv -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o ConnectTimeout=5 $dest exit 2>$null
+        & ssh @portArgs -i $priv -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o ConnectTimeout=5 -o RemoteCommand=none -o RequestTTY=no $dest exit 2>$null
         if ($LASTEXITCODE -eq 0) {
             Write-Host ("이미 SSH 키가 등록되어 있습니다: {0} ({1})" -f $dest, $pub.Name) -ForegroundColor Green
             return
@@ -1658,7 +1658,7 @@ function auth
     Write-Host ("공개키 등록: {0} -> {1}" -f (Split-Path $pubKeyPath -Leaf), $dest) -ForegroundColor Green
     Write-Host "서버 접속 비밀번호를 입력해 주세요." -ForegroundColor Yellow
     $remoteCmd = 'umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; k=$(cat); grep -qxF "$k" ~/.ssh/authorized_keys || echo "$k" >> ~/.ssh/authorized_keys'
-    Get-Content -LiteralPath $pubKeyPath -TotalCount 1 | & ssh @portArgs $dest $remoteCmd
+    Get-Content -LiteralPath $pubKeyPath -TotalCount 1 | & ssh @portArgs -o RemoteCommand=none -o RequestTTY=no $dest $remoteCmd
     if ($LASTEXITCODE -ne 0) {
         Write-Error ("공개키 등록에 실패했습니다 (exit code: {0})" -f $LASTEXITCODE)
         return
@@ -1666,7 +1666,7 @@ function auth
 
     # 4) 등록한 키로 실제 접속되는지 확인
     $privKeyPath = $pubKeyPath -replace '\.pub$', ''
-    & ssh @portArgs -i $privKeyPath -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o ConnectTimeout=5 $dest exit 2>$null
+    & ssh @portArgs -i $privKeyPath -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o ConnectTimeout=5 -o RemoteCommand=none -o RequestTTY=no $dest exit 2>$null
     if ($LASTEXITCODE -eq 0) {
         Write-Host ("SSH 키 등록 완료 ({0})" -f $dest) -ForegroundColor Green
     }
@@ -1897,7 +1897,7 @@ function dn # scp remote ($SV) -> $HOME/Downloads
             $remoteTest = 'test -d "' + $RemotePath + '"'
         }
 
-        & ssh -o BatchMode=yes -o ConnectTimeout=3 -p $global:SVPORT $global:SV $remoteTest 2>$null
+        & ssh -o BatchMode=yes -o ConnectTimeout=3 -o RemoteCommand=none -o RequestTTY=no -p $global:SVPORT $global:SV $remoteTest 2>$null
         $isDir = ($LASTEXITCODE -eq 0)
     }
 
@@ -1957,7 +1957,7 @@ function rr # scp -3 remote ($SV) -> remote ($DST), 로컬 경유 전송 (대상
             $remoteTest = 'test -d "' + $SourcePath + '"'
         }
 
-        & ssh -o BatchMode=yes -o ConnectTimeout=3 -p $global:SVPORT $global:SV $remoteTest 2>$null
+        & ssh -o BatchMode=yes -o ConnectTimeout=3 -o RemoteCommand=none -o RequestTTY=no -p $global:SVPORT $global:SV $remoteTest 2>$null
         $isDir = ($LASTEXITCODE -eq 0)
     }
 
@@ -2018,7 +2018,8 @@ function Get-SshRemotePathCompletion {
         $remoteCmd = 'ls -1ap -- "' + $dir + '"'
     }
 
-    $items = & ssh -o BatchMode=yes -o ConnectTimeout=3 -p $Port $HostAlias "$remoteCmd 2>/dev/null" 2>$null
+    # config의 Host * 에 RemoteCommand(로그인 셸 유지용)가 걸려 있어도 명령 실행이 되도록 무효화한다.
+    $items = & ssh -o BatchMode=yes -o ConnectTimeout=3 -o RemoteCommand=none -o RequestTTY=no -p $Port $HostAlias "$remoteCmd 2>/dev/null" 2>$null
 
     if ($LASTEXITCODE -ne 0 -or -not $items) {
         return
