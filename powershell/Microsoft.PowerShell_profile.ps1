@@ -1560,6 +1560,16 @@ function p {
     ping-test @args
 }
 
+function Show-AuthUsage {
+    # fnc-ignore
+    Write-Host "사용법: auth [계정@서버IP | ssh별칭] [포트]" -ForegroundColor Yellow
+    Write-Host "  auth                    : ss로 선택한 서버(`$SV)에 등록 (포트는 선택 시 값 사용)" -ForegroundColor DarkCyan
+    Write-Host "  auth user@10.0.0.5      : 기본 포트(22)로 등록" -ForegroundColor DarkCyan
+    Write-Host "  auth user@10.0.0.5 2222 : 22가 아닌 포트는 두 번째 인자로 지정" -ForegroundColor DarkCyan
+    Write-Host "  auth myhost             : ssh config 별칭 사용 (포트는 config의 Port 값 적용)" -ForegroundColor DarkCyan
+    Write-Host "  auth myhost 2222        : 별칭을 쓰면서 포트만 따로 지정" -ForegroundColor DarkCyan
+}
+
 function auth
 {
     # 서버에 SSH 공개키를 등록해 비밀번호 없이 접속하도록 설정한다.
@@ -1568,8 +1578,18 @@ function auth
         [string]$Target,
 
         [Parameter(Position = 1)]
-        [int]$Port = 0
+        [int]$Port = 0,
+
+        [Alias('h')]
+        [switch]$Help
     )
+
+    # -h/-Help는 스위치로 바인딩되지만 --help, -?, /? 는 $Target에 문자열로 들어온다.
+    # (지원하지 않는 옵션이 서버 이름으로 해석돼 엉뚱한 등록을 시도하는 것을 막는다.)
+    if ($Help -or $Target -match '^(--?help|[-/]\?|/h)$') {
+        Show-AuthUsage
+        return
+    }
 
     foreach ($cmd in 'ssh', 'ssh-keygen') {
         if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
@@ -1590,7 +1610,7 @@ function auth
         elseif ($global:SVPORT) { $portArgs = @('-p', $global:SVPORT) }
     }
     else {
-        Write-Host "사용법: auth 계정@서버IP [포트]  (sss로 서버를 선택했다면 auth 만 입력)" -ForegroundColor Yellow
+        Show-AuthUsage
         return
     }
 
@@ -2019,7 +2039,16 @@ function Get-SshRemotePathCompletion {
     }
 
     # config의 Host * 에 RemoteCommand(로그인 셸 유지용)가 걸려 있어도 명령 실행이 되도록 무효화한다.
-    $items = & ssh -o BatchMode=yes -o ConnectTimeout=3 -o RemoteCommand=none -o RequestTTY=no -p $Port $HostAlias "$remoteCmd 2>/dev/null" 2>$null
+    # 원격(리눅스) ls는 UTF-8인데 한국어 Windows 콘솔 기본 인코딩(CP949)으로 캡처하면 한글 파일명이
+    # 깨지므로, 조회하는 동안만 콘솔 인코딩을 UTF-8로 바꾸고 끝나면 원래대로 복원한다.
+    $prevEncoding = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+        $items = & ssh -o BatchMode=yes -o ConnectTimeout=3 -o RemoteCommand=none -o RequestTTY=no -p $Port $HostAlias "$remoteCmd 2>/dev/null" 2>$null
+    }
+    finally {
+        [Console]::OutputEncoding = $prevEncoding
+    }
 
     if ($LASTEXITCODE -ne 0 -or -not $items) {
         return
