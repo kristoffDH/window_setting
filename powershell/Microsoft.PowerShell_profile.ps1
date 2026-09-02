@@ -1030,6 +1030,12 @@ function Set-SshSelectionVars {
         [string]$Prefix = 'SV'
     )
 
+    # 서버가 바뀌면 이전 서버 기준의 작업 디렉터리($SVDIR)는 의미가 없으므로 함께 해제한다.
+    if ($Prefix -eq 'SV') {
+        Remove-Variable 'SVDIR' -Scope Global -ErrorAction SilentlyContinue
+        Remove-Item 'Env:OMP_SVDIR' -ErrorAction SilentlyContinue
+    }
+
     # 선택 확정 시점이므로 여기서만 IP를 실제로 조회한다 (picker 탐색 중에는 조회 안 함).
     $detail = Get-SshDetailCached -Alias $Entry.Alias -ResolveIp
 
@@ -1075,7 +1081,11 @@ function Clear-SshSelectionVars {
         [string]$Prefix = 'SV'
     )
 
-    foreach ($suffix in '', 'ID', 'IP', 'PORT') {
+    # 원격 작업 디렉터리(DIR)는 SV 전용이라 SV 계열을 해제할 때만 함께 지운다.
+    $suffixes = @('', 'ID', 'IP', 'PORT')
+    if ($Prefix -eq 'SV') { $suffixes += 'DIR' }
+
+    foreach ($suffix in $suffixes) {
         Remove-Variable "$Prefix$suffix" -Scope Global -ErrorAction SilentlyContinue
         Remove-Item "Env:OMP_$Prefix$suffix" -ErrorAction SilentlyContinue
     }
@@ -1827,6 +1837,95 @@ function Test-ScpReady {
     return $true
 }
 
+function set-svdir
+{
+    # 원격 작업 디렉터리($SVDIR)를 지정한다. up/dn/rr의 상대 경로 기준이 된다. (축약: sw, -c: 해제 = xw)
+    param(
+        [Parameter(Position = 0)]
+        [string]$Path,
+
+        [Alias('c')]
+        [switch]$Clear
+    )
+
+    if ($Clear) {
+        Remove-Variable 'SVDIR' -Scope Global -ErrorAction SilentlyContinue
+        Remove-Item 'Env:OMP_SVDIR' -ErrorAction SilentlyContinue
+        Write-Host "원격 작업 디렉터리를 해제했습니다. (기준: 원격 홈)" -ForegroundColor Green
+        return
+    }
+
+    # 인자 없이 부르면 현재 값을 보여준다 (설정 전이면 사용법).
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        if ([string]::IsNullOrWhiteSpace($global:SVDIR)) {
+            Write-Host "사용법: sw <원격 디렉터리>   (Tab 자동완성 지원, 해제: xw)" -ForegroundColor Yellow
+            Write-Host "  설정하면 up/dn/rr의 상대 경로가 이 디렉터리 기준으로 해석됩니다." -ForegroundColor DarkCyan
+        }
+        else {
+            Write-Host ("현재 원격 작업 디렉터리: {0}:{1}" -f $global:SV, $global:SVDIR) -ForegroundColor Green
+        }
+        return
+    }
+
+    if (-not (Test-ScpReady)) { return }
+
+    # 없는 경로를 잡아두면 이후 전송이 조용히 실패하므로 미리 확인한다.
+    $target = $Path.TrimEnd('/')
+    if ([string]::IsNullOrEmpty($target)) { $target = '/' }
+
+    if ($target -eq '~') {
+        $remoteTest = 'test -d "$HOME"'
+    }
+    elseif ($target.StartsWith('~/')) {
+        $remoteTest = 'test -d "$HOME/' + $target.Substring(2) + '"'
+    }
+    else {
+        $remoteTest = 'test -d "' + $target + '"'
+    }
+
+    & ssh -o BatchMode=yes -o ConnectTimeout=3 -o RemoteCommand=none -o RequestTTY=no -p $global:SVPORT $global:SV $remoteTest 2>$null
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error ("원격 디렉터리를 찾지 못했습니다: {0}:{1}" -f $global:SV, $target)
+        return
+    }
+
+    Set-Variable -Name 'SVDIR' -Value $target -Scope Global
+    Set-Item -Path 'Env:OMP_SVDIR' -Value $target
+    Write-Host ("원격 작업 디렉터리 설정: {0}:{1}" -f $global:SV, $target) -ForegroundColor Green
+}
+
+function sw {
+    # alias-fn: 원격 작업 디렉터리($SVDIR)를 지정한다. (= set-svdir, 해제는 xw)
+    param([Parameter(Position = 0)][string]$Path)
+    set-svdir -Path $Path
+}
+
+function xw {
+    # alias-fn: 원격 작업 디렉터리($SVDIR)를 해제한다. (= set-svdir -c)
+    set-svdir -Clear
+}
+
+function Resolve-SvRemotePath {
+    # fnc-ignore
+    # $SVDIR이 설정돼 있으면 상대 경로를 그 디렉터리 기준으로 바꾼다.
+    # /나 ~로 시작하는 경로는 그대로 두어 SVDIR을 벗어나는 탈출구로 쓴다.
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($global:SVDIR)) {
+        if ([string]::IsNullOrWhiteSpace($Path)) { return '~/' }
+        return $Path
+    }
+
+    # SVDIR이 '/' 하나면 TrimEnd 결과가 빈 문자열이 되어 그대로 루트 기준이 된다.
+    $base = ([string]$global:SVDIR).TrimEnd('/')
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return "$base/" }
+    if ($Path.StartsWith('/') -or $Path.StartsWith('~')) { return $Path }
+
+    return "$base/$Path"
+}
+
 function up # scp local -> remote ($SV), 와일드카드(*.tar 등) 지원
 {
     param(
@@ -1834,10 +1933,13 @@ function up # scp local -> remote ($SV), 와일드카드(*.tar 등) 지원
         [string]$LocalPath,
 
         [Parameter(Position = 1)]
-        [string]$RemotePath = '~/'
+        [string]$RemotePath = ''
     )
 
     if (-not (Test-ScpReady)) { return }
+
+    # 대상 경로를 생략하면 $SVDIR(미설정이면 원격 홈)로 올린다.
+    $RemotePath = Resolve-SvRemotePath -Path $RemotePath
 
     # PowerShell은 글롭을 자동 확장하지 않으므로, 와일드카드면 여기서 직접 확장해
     # 매칭된 모든 항목을 한 번의 scp 호출로 보낸다.
@@ -1894,6 +1996,9 @@ function dn # scp remote ($SV) -> $HOME/Downloads
     )
 
     if (-not (Test-ScpReady)) { return }
+
+    # $SVDIR이 설정돼 있으면 상대 경로는 그 디렉터리 기준으로 해석한다.
+    $RemotePath = Resolve-SvRemotePath -Path $RemotePath
 
     $downloadDir = Join-Path $HOME 'Downloads'
     $source = "{0}:{1}" -f $global:SV, $RemotePath
@@ -1960,6 +2065,9 @@ function rr # scp -3 remote ($SV) -> remote ($DST), 로컬 경유 전송 (대상
 
     if (-not (Test-ScpReady -RequireDst)) { return }
 
+    # 원본은 SV 기준이므로 $SVDIR을 적용한다 (대상은 DST 소속이라 적용하지 않는다).
+    $SourcePath = Resolve-SvRemotePath -Path $SourcePath
+
     # 와일드카드(*.tar 등)면 원격 확장은 scp가 수행하므로 디렉터리 검사를 건너뛴다 (여러 파일 전송).
     $hasWildcard = $SourcePath.IndexOfAny([char[]]@('*', '?')) -ge 0
 
@@ -2016,7 +2124,10 @@ function Get-SshRemotePathCompletion {
 
         [string]$WordToComplete = '',
 
-        [switch]$DirOnly
+        [switch]$DirOnly,
+
+        # $SVDIR 같은 기준 디렉터리 — 상대 경로 후보를 이 아래에서 찾는다.
+        [string]$BaseDir = ''
     )
 
     $word = $WordToComplete.Trim("'`"")
@@ -2026,16 +2137,24 @@ function Get-SshRemotePathCompletion {
     $dir = if ($slash -ge 0) { $word.Substring(0, $slash + 1) } else { '' }
     $prefix = if ($slash -ge 0) { $word.Substring($slash + 1) } else { $word }
 
-    # 디렉터리 미지정이면 원격 홈, ~/ 시작이면 원격 $HOME으로 치환해서 조회한다.
+    # 기준 디렉터리($SVDIR)가 있고 입력이 /나 ~로 시작하지 않으면 그 아래에서 찾는다.
+    # (완성 결과는 상대 경로 그대로 돌려줘야 up/dn이 다시 $SVDIR 기준으로 해석한다)
+    $base = ''
+    if (-not [string]::IsNullOrWhiteSpace($BaseDir) -and
+        -not $word.StartsWith('/') -and -not $word.StartsWith('~')) {
+        $base = $BaseDir.TrimEnd('/') + '/'
+    }
+
+    # 기준 디렉터리도 입력도 없으면 원격 홈, ~/ 시작이면 원격 $HOME으로 치환해서 조회한다.
     # ($HOME은 원격 셸에서 확장되어야 하므로 PS에서는 리터럴로 유지)
-    if ([string]::IsNullOrEmpty($dir)) {
+    if ([string]::IsNullOrEmpty($dir) -and [string]::IsNullOrEmpty($base)) {
         $remoteCmd = 'ls -1ap'
     }
     elseif ($dir.StartsWith('~/')) {
         $remoteCmd = 'ls -1ap -- "$HOME/' + $dir.Substring(2) + '"'
     }
     else {
-        $remoteCmd = 'ls -1ap -- "' + $dir + '"'
+        $remoteCmd = 'ls -1ap -- "' + $base + $dir + '"'
     }
 
     # config의 Host * 에 RemoteCommand(로그인 셸 유지용)가 걸려 있어도 명령 실행이 되도록 무효화한다.
@@ -2084,7 +2203,8 @@ Register-ArgumentCompleter -CommandName up, dn -ParameterName RemotePath -Script
         return
     }
 
-    Get-SshRemotePathCompletion -HostAlias $sv.Value -Port ([string]$svport.Value) -WordToComplete $wordToComplete -DirOnly:($commandName -eq 'up')
+    Get-SshRemotePathCompletion -HostAlias $sv.Value -Port ([string]$svport.Value) -WordToComplete $wordToComplete `
+        -DirOnly:($commandName -eq 'up') -BaseDir ([string]$global:SVDIR)
 }
 
 # rr 첫 인자(원본)는 SV 기준 파일+디렉터리, 둘째 인자(대상)는 DST 기준 디렉터리만 보여준다.
@@ -2099,7 +2219,22 @@ Register-ArgumentCompleter -CommandName rr -ParameterName SourcePath -ScriptBloc
         return
     }
 
-    Get-SshRemotePathCompletion -HostAlias $sv.Value -Port ([string]$svport.Value) -WordToComplete $wordToComplete
+    Get-SshRemotePathCompletion -HostAlias $sv.Value -Port ([string]$svport.Value) -WordToComplete $wordToComplete -BaseDir ([string]$global:SVDIR)
+}
+
+# sw는 기준 디렉터리 자체를 고르는 명령이라 $SVDIR을 적용하지 않고 원격 홈/절대경로에서 찾는다.
+Register-ArgumentCompleter -CommandName sw, set-svdir -ParameterName Path -ScriptBlock {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+    $sv = Get-Variable SV -Scope Global -ErrorAction SilentlyContinue
+    $svport = Get-Variable SVPORT -Scope Global -ErrorAction SilentlyContinue
+
+    if (-not $sv -or [string]::IsNullOrWhiteSpace([string]$sv.Value) -or
+        -not $svport -or [string]::IsNullOrWhiteSpace([string]$svport.Value)) {
+        return
+    }
+
+    Get-SshRemotePathCompletion -HostAlias $sv.Value -Port ([string]$svport.Value) -WordToComplete $wordToComplete -DirOnly
 }
 
 Register-ArgumentCompleter -CommandName rr -ParameterName DestPath -ScriptBlock {
@@ -2152,7 +2287,7 @@ function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 
     # 세션 상태를 임시 스크립트에 담아 새 pane이 프로필 로드 후 실행하게 한다.
     # (프로필에 정의된 alias/function은 새 pane이 프로필을 읽으면서 자동 적용된다)
     $lines = [System.Collections.Generic.List[string]]::new()
-    foreach ($name in 'SV', 'SVID', 'SVIP', 'DST', 'DSTID', 'DSTIP') {
+    foreach ($name in 'SV', 'SVID', 'SVIP', 'SVDIR', 'DST', 'DSTID', 'DSTIP') {
         $var = Get-Variable $name -Scope Global -ErrorAction SilentlyContinue
         if ($var -and $null -ne $var.Value) {
             $lines.Add(("`$global:{0} = '{1}'" -f $name, ([string]$var.Value -replace "'", "''")))
@@ -2164,7 +2299,7 @@ function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 
             $lines.Add(("`$global:{0} = {1}" -f $name, [int]$port.Value))
         }
     }
-    foreach ($name in 'OMP_SV', 'OMP_SVID', 'OMP_SVIP', 'OMP_SVPORT', 'OMP_DST', 'OMP_DSTID', 'OMP_DSTIP', 'OMP_DSTPORT') {
+    foreach ($name in 'OMP_SV', 'OMP_SVID', 'OMP_SVIP', 'OMP_SVPORT', 'OMP_SVDIR', 'OMP_DST', 'OMP_DSTID', 'OMP_DSTIP', 'OMP_DSTPORT') {
         $value = [Environment]::GetEnvironmentVariable($name)
         if ($value) {
             $lines.Add(("`$env:{0} = '{1}'" -f $name, ($value -replace "'", "''")))
