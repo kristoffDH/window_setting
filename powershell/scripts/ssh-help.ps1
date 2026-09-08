@@ -160,6 +160,7 @@ function ssh-help {
     Add-Cmd "auth [대상] [포트]" "공개키를 등록해 비밀번호 없이 접속하게 만든다"
     Add-Note "인자 없이 auth = 선택된 SV 대상. 사용법은 auth -h"
     Add-Note "예: auth user@10.0.0.5 2222  /  auth myhost (config 별칭은 포트 자동)"
+    Add-Note "IP 재사용 등으로 호스트 키가 바뀐 서버는 known_hosts 항목을 자동 정리한 뒤 등록한다"
     Add-Cmd "p"                "선택된 SVIP로 ping (= ping-test)"
     Add-Cmd "d [-r|-l|-u|-d]"  "현재 세션을 화면 분할로 복제 (= dup, 기본 -r 우측)"
     Add-Note "새 pane이 SV/DST/SVDIR 선택 상태를 그대로 이어받는다"
@@ -215,6 +216,8 @@ function ssh-help {
     Add-Title "[ 6. 자주 겪는 문제 ]"
     Add-Cmd "자동완성이 로컬 경로" "SV 미선택이거나 키 인증이 안 된 상태 - ss 후 auth 실행"
     Add-Cmd "변수 미설정 안내"    "up/dn은 ss가, rr은 ss + sd가 모두 필요하다"
+    Add-Cmd "호스트 키 경고"     "REMOTE HOST IDENTIFICATION HAS CHANGED - auth가 자동 정리한다"
+    Add-Note "수동으로 지우려면 del-host <IP> (known_hosts 자동 백업 후 해당 항목 삭제)"
     Add-Cmd "전체 명령 목록"     "fnc (함수 목록) / fnc-alias (alias 목록)"
 
     Add-Plain ""

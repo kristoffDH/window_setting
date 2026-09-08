@@ -1570,6 +1570,42 @@ function p {
     ping-test @args
 }
 
+function Clear-ChangedHostKey {
+    # fnc-ignore
+    # 서버의 호스트 키가 known_hosts 기록과 달라 접속이 막히는지 확인하고, 그럴 때만 해당 항목을 지운다.
+    # (IP를 재사용한 다른 장비로 교체된 경우. 무조건 지우면 중간자 공격 경고 자체가 무의미해지므로
+    #  실제 충돌이 확인될 때만 정리하고, 무엇을 지웠는지 화면에 남긴다.)
+    # 반환값: 정리했으면 $true — 호출한 쪽이 새 키를 받아들이도록 옵션을 붙이는 데 쓴다.
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Destination,
+
+        [string[]]$PortArgs = @()
+    )
+
+    $probe = & ssh @PortArgs -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=yes `
+        -o RemoteCommand=none -o RequestTTY=no $Destination exit 2>&1
+    $text = $probe | Out-String
+
+    if ($text -notmatch 'REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed') {
+        return $false
+    }
+
+    # known_hosts에는 별칭이 아니라 실제 접속 대상(HostName)이 기록되므로 그 이름으로 지운다.
+    $target = $Destination -replace '^.*@', ''
+    $resolved = & ssh -G @PortArgs $Destination 2>$null |
+        Where-Object { $_ -match '^hostname\s+(.+)$' } |
+        ForEach-Object { $matches[1] } |
+        Select-Object -First 1
+    if ($resolved) { $target = $resolved }
+
+    Write-Host "서버의 호스트 키가 기존 known_hosts 기록과 다릅니다 (IP 재사용 등으로 장비가 바뀐 경우)." -ForegroundColor Yellow
+    Write-Host ("기존 항목을 정리한 뒤 등록을 계속합니다: {0}" -f $target) -ForegroundColor Yellow
+    del-host $target
+
+    return $true
+}
+
 function Show-AuthUsage {
     # fnc-ignore
     Write-Host "사용법: auth [계정@서버IP | ssh별칭] [포트]" -ForegroundColor Yellow
@@ -1624,6 +1660,13 @@ function auth
         return
     }
 
+    # 같은 IP를 쓰던 다른 장비로 바뀌었으면 옛 호스트 키 때문에 접속 자체가 막히므로 먼저 정리한다.
+    # 정리한 경우에만 새 호스트 키를 자동으로 받아들인다(이미 사용자가 재등록을 의도한 상황).
+    $hostKeyArgs = @()
+    if (Clear-ChangedHostKey -Destination $dest -PortArgs $portArgs) {
+        $hostKeyArgs = @('-o', 'StrictHostKeyChecking=accept-new')
+    }
+
     $sshDir = Join-Path $HOME '.ssh'
     $pubKeys = @(Get-ChildItem -Path (Join-Path $sshDir '*.pub') -File -ErrorAction SilentlyContinue |
         Where-Object { Test-Path -LiteralPath ($_.FullName -replace '\.pub$', '') })
@@ -1631,7 +1674,7 @@ function auth
     # 1) 로컬 키 중 하나라도 이미 등록되어 있으면 바로 종료
     foreach ($pub in $pubKeys) {
         $priv = $pub.FullName -replace '\.pub$', ''
-        & ssh @portArgs -i $priv -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o ConnectTimeout=5 -o RemoteCommand=none -o RequestTTY=no $dest exit 2>$null
+        & ssh @portArgs @hostKeyArgs -i $priv -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o ConnectTimeout=5 -o RemoteCommand=none -o RequestTTY=no $dest exit 2>$null
         if ($LASTEXITCODE -eq 0) {
             Write-Host ("이미 SSH 키가 등록되어 있습니다: {0} ({1})" -f $dest, $pub.Name) -ForegroundColor Green
             return
@@ -1688,7 +1731,7 @@ function auth
     Write-Host ("공개키 등록: {0} -> {1}" -f (Split-Path $pubKeyPath -Leaf), $dest) -ForegroundColor Green
     Write-Host "서버 접속 비밀번호를 입력해 주세요." -ForegroundColor Yellow
     $remoteCmd = 'umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; k=$(cat); grep -qxF "$k" ~/.ssh/authorized_keys || echo "$k" >> ~/.ssh/authorized_keys'
-    Get-Content -LiteralPath $pubKeyPath -TotalCount 1 | & ssh @portArgs -o RemoteCommand=none -o RequestTTY=no $dest $remoteCmd
+    Get-Content -LiteralPath $pubKeyPath -TotalCount 1 | & ssh @portArgs @hostKeyArgs -o RemoteCommand=none -o RequestTTY=no $dest $remoteCmd
     if ($LASTEXITCODE -ne 0) {
         Write-Error ("공개키 등록에 실패했습니다 (exit code: {0})" -f $LASTEXITCODE)
         return
@@ -1696,7 +1739,7 @@ function auth
 
     # 4) 등록한 키로 실제 접속되는지 확인
     $privKeyPath = $pubKeyPath -replace '\.pub$', ''
-    & ssh @portArgs -i $privKeyPath -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o ConnectTimeout=5 -o RemoteCommand=none -o RequestTTY=no $dest exit 2>$null
+    & ssh @portArgs @hostKeyArgs -i $privKeyPath -o IdentitiesOnly=yes -o BatchMode=yes -o PasswordAuthentication=no -o ConnectTimeout=5 -o RemoteCommand=none -o RequestTTY=no $dest exit 2>$null
     if ($LASTEXITCODE -eq 0) {
         Write-Host ("SSH 키 등록 완료 ({0})" -f $dest) -ForegroundColor Green
     }
