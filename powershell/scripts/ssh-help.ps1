@@ -142,6 +142,7 @@ function ssh-help {
     Add-Cmd "ss [별칭]"        "작업 서버(SV) 선택. 인자 없으면 목록에서 방향키로 고른다"
     Add-Note "Tab: ssh config의 Host 별칭 자동완성"
     Add-Cmd "sd [별칭]"        "전송 대상(DST) 선택 - rr 전용이며 up/dn과는 무관"
+    Add-Cmd "sb <SV> <DST>"    "SV와 DST를 한 번에 선택 (= ss + sd, 두 인자 모두 Tab 자동완성)"
     Add-Cmd "xs"               "SV 해제 (원격 작업 디렉터리 SVDIR도 함께 해제)"
     Add-Cmd "xd"               "DST 해제"
     Add-Cmd "ssh-config"       "ssh config 파일을 편집기로 연다"
@@ -210,6 +211,7 @@ function ssh-help {
     Add-Section "서버에서 서버로 옮기기"
     Add-Plain "    ss srchost          # 원본 서버"
     Add-Plain "    sd dsthost          # 대상 서버"
+    Add-Plain "    sb srchost dsthost  # 위 두 줄을 한 번에"
     Add-Plain "    rr backup.tar ~/    # 원본:backup.tar -> 대상:~/"
 
     # ── 6. 문제 해결 ─────────────────────────────────────────────

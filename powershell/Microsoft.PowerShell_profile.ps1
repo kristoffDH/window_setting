@@ -1455,8 +1455,24 @@ function sd {
     $null = Set-SshHost -Dst -Alias $Alias
 }
 
-# ss/sd/set-sshhost 별칭 자동완성: ssh config의 Host 목록을 후보로 보여준다. (config 파싱만, 네트워크 조회 없음)
-Register-ArgumentCompleter -CommandName ss, sd, Set-SshHost -ParameterName Alias -ScriptBlock {
+function sb {
+    # alias-fn: 원본 서버(SV)와 rr 전송 대상(DST)을 한 번에 선택한다. (= ss <SV> + sd <DST>)
+    param(
+        [Parameter(Position = 0)]
+        [string]$Source,
+
+        [Parameter(Position = 1)]
+        [string]$Dest
+    )
+
+    # 생략한 쪽은 ss/sd처럼 목록에서 고른다. SV 선택이 실패·취소되면($true가 아니면) DST는 건드리지 않는다.
+    if (-not (@(Set-SshHost -Alias $Source) -contains $true)) { return }
+    $null = Set-SshHost -Dst -Alias $Dest
+}
+
+# ss/sd/sb/set-sshhost 별칭 자동완성: ssh config의 Host 목록을 후보로 보여준다. (config 파싱만, 네트워크 조회 없음)
+# 같은 로직을 여러 명령·파라미터에 등록하려고 스크립트블록을 변수로 만든 뒤, 등록이 끝나면 변수는 지운다.
+$sshHostAliasCompleter = {
     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
 
     $configPath = "$HOME/.ssh/config"
@@ -1490,6 +1506,11 @@ Register-ArgumentCompleter -CommandName ss, sd, Set-SshHost -ParameterName Alias
         )
     }
 }
+
+Register-ArgumentCompleter -CommandName ss, sd, Set-SshHost -ParameterName Alias -ScriptBlock $sshHostAliasCompleter
+Register-ArgumentCompleter -CommandName sb -ParameterName Source -ScriptBlock $sshHostAliasCompleter
+Register-ArgumentCompleter -CommandName sb -ParameterName Dest -ScriptBlock $sshHostAliasCompleter
+Remove-Variable -Name sshHostAliasCompleter
 
 function ssh-con {
     # 선택된 $SV 서버에 ssh로 접속한다. (alias: c)
