@@ -51,6 +51,13 @@
     "copyOnSelect": false,
     "defaultProfile": "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
     "disableAnimations": true,
+    "disabledProfileSources": 
+    [
+        "Windows.Terminal.Azure",
+        "Microsoft.WSL",
+        "Windows.Terminal.VisualStudio",
+        "Windows.Terminal.Wsl"
+    ],
     "experimental.detectURLs": false,
     "focusFollowMouse": false,
     "initialCols": 120,
@@ -230,7 +237,7 @@
                 "guid": "{574e775e-4f2a-5b96-ac1e-a2962a402336}",
                 "hidden": false,
                 "name": "PowerShell",
-                "opacity": 90,
+                "opacity": 85,
                 "padding": "5",
                 "source": "Windows.Terminal.PowershellCore",
                 "useAcrylic": true
@@ -452,7 +459,7 @@
             "brightBlue": "#0092FF",
             "brightCyan": "#67FFF0",
             "brightGreen": "#9AFF87",
-            "brightPurple": "#FF2740",
+            "brightPurple": "#D19BFF",
             "brightRed": "#FF2740",
             "brightWhite": "#FFFFFF",
             "brightYellow": "#FFD242",
@@ -461,7 +468,7 @@
             "foreground": "#FFFFFF",
             "green": "#1A921C",
             "name": "Flat Remix",
-            "purple": "#FF000F",
+            "purple": "#B06CF5",
             "red": "#FF000F",
             "selectionBackground": "#97A39D",
             "white": "#FFFFFF",
