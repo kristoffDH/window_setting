@@ -160,9 +160,23 @@ Update-OmpTag
 
 function reload
 {
-    # OMP_TAG를 갱신하고 oh-my-posh 설정을 다시 읽어 프롬프트를 새로고침한다.
+    # OMP_TAG를 갱신하고 oh-my-posh 테마를 다시 읽어 프롬프트를 새로고침한다. (프로필 변경은 새 창에서 반영)
     Update-OmpTag
-    oh-my-posh init pwsh --config "$HOME\.mytheme.omp.json" | Invoke-Expression
+
+    # omp 모듈을 다시 import하면 zoxide가 감싸 둔 prompt가 덮여 z의 폴더 학습이 끊긴다.
+    # 그래서 init CLI로 새 테마 스냅샷만 등록하고 세션 ID/설정 경로 env만 바꾼다 (프롬프트는 매번 이 env로 렌더).
+    $stub = (oh-my-posh init pwsh --config "$HOME\.mytheme.omp.json") -join "`n"
+    $sessionId = [regex]::Match($stub, '\$env:POSH_SESSION_ID\s*=\s*"([^"]+)"').Groups[1].Value
+    $configPath = [regex]::Match($stub, "\`$env:POSH_CONFIG\s*=\s*'([^']+)'").Groups[1].Value
+
+    # 스텁 형식이 바뀌었거나 omp 모듈이 없으면 예전처럼 전체 init으로 폴백한다.
+    if (-not $sessionId -or -not $configPath -or -not (Get-Module -Name 'oh-my-posh-core')) {
+        $stub | Invoke-Expression
+        return
+    }
+
+    $env:POSH_SESSION_ID = $sessionId
+    $env:POSH_CONFIG = $configPath
 }
 
 #########################################################
@@ -433,7 +447,7 @@ function Show-MyPalette {
         @{ Name = "brightBlue";          Hex = "#0092FF" },
         @{ Name = "brightCyan";          Hex = "#67FFF0" },
         @{ Name = "brightGreen";         Hex = "#9AFF87" },
-        @{ Name = "brightPurple";        Hex = "#FF2740" },
+        @{ Name = "brightPurple";        Hex = "#D19BFF" },
         @{ Name = "brightRed";           Hex = "#FF2740" },
         @{ Name = "brightWhite";         Hex = "#FFFFFF" },
         @{ Name = "brightYellow";        Hex = "#FFD242" },
@@ -441,7 +455,7 @@ function Show-MyPalette {
         @{ Name = "cyan";                Hex = "#00D8EB" },
         @{ Name = "foreground";          Hex = "#FFFFFF" },
         @{ Name = "green";               Hex = "#1A921C" },
-        @{ Name = "purple";              Hex = "#FF000F" },
+        @{ Name = "purple";              Hex = "#B06CF5" },
         @{ Name = "red";                 Hex = "#FF000F" },
         @{ Name = "selectionBackground"; Hex = "#97A39D" },
         @{ Name = "white";               Hex = "#FFFFFF" },

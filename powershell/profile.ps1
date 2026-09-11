@@ -10,7 +10,7 @@
 #
 # 경로는 여기서 전역 변수로 한 번만 정의한다 — fnc-extend.ps1(fnc-all)과
 # $PROFILE(upload-cfg)이 이 변수를 참조하므로 폴더를 옮기면 이 줄만 고치면 된다.
-$global:my_scripts_dir = 'C:\CorePlatform\99. pwsh script'
+$global:my_scripts_dir = 'C:\Users\hanssak\Documents\internal-pc'
 
 if ([System.IO.Directory]::Exists($global:my_scripts_dir)) {
     foreach ($my_script in [System.IO.Directory]::GetFiles($global:my_scripts_dir, '*.ps1')) {

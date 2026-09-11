@@ -8,10 +8,23 @@
   "transient_prompt": {
     "foreground": "#FFFFFF",
     "background": "transparent",
-    "template": "<#0092FF></>  <#3A86FF>[</> <#FFFFFF>{{ .PWD }}</> <#3A86FF>]</> "
+    "template": "<#3A86FF></>  <#3A86FF>[</> <#FFFFFF>{{ .PWD }}</> <#3A86FF>]</> "
   },
 
   "blocks": [
+    {
+      "type": "prompt",
+      "alignment": "left",
+      "segments": [
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#FFFFFF",
+          "background": "transparent",
+          "template": "{{ if ne .Env.POSH_CURSOR_LINE \"1\" }}⠀{{ end }}"
+        }
+      ]
+    },
     {
       "type": "prompt",
       "alignment": "left",
@@ -22,7 +35,7 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": "{{ $tag := .Env.OMP_TAG }}{{ $sv := .Env.OMP_SV }}{{ $svid := .Env.OMP_SVID }}{{ $svip := .Env.OMP_SVIP }}{{ $svport := .Env.OMP_SVPORT }}{{ $svdir := .Env.OMP_SVDIR }}{{ if or $tag $sv }} <#17d7a0></> <#FFFFFF>{{ if $tag }}{{ $tag }}{{ end }}{{ if and $tag $sv }} <#444444>|</> {{ end }}{{ if $sv }}<#E9C46A> </>SV : {{ $sv }}{{ end }}{{ if $svid }} <#444444>|</> <#C77DFF> </>ID : {{ $svid }}{{ end }}{{ if $svip }} <#444444>|</> <#4CC9F0> </>IP : {{ $svip }}{{ end }}{{ if $svport }} <#444444>|</> <#F4A261> </>PORT : {{ $svport }}{{ end }}{{ if $svdir }} <#444444>|</> <#90BE6D> </>DIR : {{ $svdir }}{{ end }}</> {{ end }}"
+          "template": "{{ $sv := .Env.OMP_SV }}{{ $svid := .Env.OMP_SVID }}{{ $svip := .Env.OMP_SVIP }}{{ $svport := .Env.OMP_SVPORT }}{{ $svdir := .Env.OMP_SVDIR }}{{ if $sv }} <#2EC4B6></> <#FFFFFF><#2EC4B6>SV</>  : {{ $sv }}{{ if $svid }} <#5C6370>|</> <#2EC4B6> </>ID : {{ $svid }}{{ end }}{{ if $svip }} <#5C6370>|</> <#2EC4B6> </>IP : {{ $svip }}{{ end }}{{ if $svport }} <#5C6370>|</> <#2EC4B6> </>PORT : {{ $svport }}{{ end }}{{ if $svdir }} <#5C6370>|</> <#2EC4B6> </>DIR : {{ $svdir }}{{ end }}</> {{ end }}"
         }
       ]
     },    
@@ -36,7 +49,7 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": "{{ $dst := .Env.OMP_DST }}{{ $dstid := .Env.OMP_DSTID }}{{ $dstip := .Env.OMP_DSTIP }}{{ $dstport := .Env.OMP_DSTPORT }}{{ if $dst }} <#E76F51></> <#FFFFFF><#E76F51> </>DST : {{ $dst }}{{ if $dstid }} <#444444>|</> <#E76F51>  </>ID : {{ $dstid }}{{ end }}{{ if $dstip }} <#444444>|</> <#E76F51>  </>IP : {{ $dstip }}{{ end }}{{ if $dstport }} <#444444>|</> <#E76F51>  </>PORT : {{ $dstport }}{{ end }}</> {{ end }}"
+          "template": "{{ $dst := .Env.OMP_DST }}{{ $dstid := .Env.OMP_DSTID }}{{ $dstip := .Env.OMP_DSTIP }}{{ $dstport := .Env.OMP_DSTPORT }}{{ if $dst }} <#E76F51></> <#FFFFFF><#E76F51>DST</> : {{ $dst }}{{ if $dstid }} <#5C6370>|</> <#E76F51> </>ID : {{ $dstid }}{{ end }}{{ if $dstip }} <#5C6370>|</> <#E76F51> </>IP : {{ $dstip }}{{ end }}{{ if $dstport }} <#5C6370>|</> <#E76F51> </>PORT : {{ $dstport }}{{ end }}</> {{ end }}"
         }
       ]
     },
@@ -50,10 +63,10 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": " <#0092FF></>  <#3A86FF>[</> <#FFFFFF>{{ .Path }}</> <#3A86FF>]</>  ",
+          "template": " <#3A86FF></>  <#3A86FF>[</> <#FFFFFF>{{ .Path }}</> <#3A86FF>]</>  ",
           "properties": {
             "style": "full",
-            "right_format": "<#4CC9F0>%s</>"
+            "right_format": "<#8AB4FF>%s</>"
           }
         },
         {
@@ -61,7 +74,7 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": " on <#1A921C></> <#FFFFFF>{{ .HEAD }}</>{{ if or (or (gt .Ahead 0) (gt .Behind 0)) (or (gt (add .Working.Added .Staging.Added) 0) (or (gt (add .Working.Modified .Staging.Modified) 0) (or (gt (add .Working.Deleted .Staging.Deleted) 0) (or (gt .Working.Untracked 0) (gt .StashCount 0))))) }} <#FFFFFF>(</> {{ if or (gt .Ahead 0) (gt .Behind 0) }}{{ if gt .Ahead 0 }}<#9AFF87>↑{{ .Ahead }}</> {{ end }}{{ if gt .Behind 0 }}<#FF2740>↓{{ .Behind }}</> {{ end }}{{ end }}{{ if gt (add .Working.Added .Staging.Added) 0 }}<#9AFF87> {{ add .Working.Added .Staging.Added }}</> {{ end }}{{ if gt (add .Working.Modified .Staging.Modified) 0 }}<#FF6B6B> {{ add .Working.Modified .Staging.Modified }}</> {{ end }}{{ if gt (add .Working.Deleted .Staging.Deleted) 0 }}<#FF2740> {{ add .Working.Deleted .Staging.Deleted }}</> {{ end }}{{ if gt .Working.Untracked 0 }}<#7E8BA3> {{ .Working.Untracked }}</> {{ end }}{{ if gt .StashCount 0 }}stash: {{ .StashCount }} {{ end }}<#FFFFFF>)</>{{ end }} ",
+          "template": " on <#8D99AE></> <#FFFFFF>{{ .HEAD }}</>{{ if or (or (gt .Ahead 0) (gt .Behind 0)) (or (gt (add .Working.Added .Staging.Added) 0) (or (gt (add .Working.Modified .Staging.Modified) 0) (or (gt (add .Working.Deleted .Staging.Deleted) 0) (or (gt .Working.Untracked 0) (gt .StashCount 0))))) }} <#FFFFFF>(</> {{ if or (gt .Ahead 0) (gt .Behind 0) }}{{ if gt .Ahead 0 }}<#90BE6D>↑{{ .Ahead }}</> {{ end }}{{ if gt .Behind 0 }}<#FF2740>↓{{ .Behind }}</> {{ end }}{{ end }}{{ if gt (add .Working.Added .Staging.Added) 0 }}<#90BE6D> {{ add .Working.Added .Staging.Added }}</> {{ end }}{{ if gt (add .Working.Modified .Staging.Modified) 0 }}<#E9C46A> {{ add .Working.Modified .Staging.Modified }}</> {{ end }}{{ if gt (add .Working.Deleted .Staging.Deleted) 0 }}<#FF2740> {{ add .Working.Deleted .Staging.Deleted }}</> {{ end }}{{ if gt .Working.Untracked 0 }}<#8D99AE> {{ .Working.Untracked }}</> {{ end }}{{ if gt .StashCount 0 }}stash: {{ .StashCount }} {{ end }}<#FFFFFF>)</>{{ end }} ",
           "properties": {
             "fetch_status": true,
             "display_status": true,
@@ -87,25 +100,32 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": "<#FF2740> </>{{ .Code }} <#444444>|</> "
+          "template": "<#FF2740> </>{{ .Code }} <#5C6370>|</> "
         },
         {
           "type": "executiontime",
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": "<#E9C46A> </>{{ .FormattedMs }} <#444444>|</> ",
+          "template": "<#8D99AE> </>{{ .FormattedMs }} <#5C6370>|</> ",
           "properties": {
             "threshold": 3000,
             "style": "austin"
           }
         },
         {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#FFFFFF",
+          "background": "transparent",
+          "template": "{{ if .Env.OMP_TAG }}<#8D99AE> </>{{ trimPrefix \"IP : \" .Env.OMP_TAG }} <#5C6370>|</> {{ end }}"
+        },
+        {
           "type": "time",
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": "<#2EC4B6> </>{{ .CurrentDate | date .Format }}",
+          "template": "<#8D99AE> </>{{ .CurrentDate | date .Format }}",
           "properties": {
             "time_format": "15:04:05"
           }
@@ -123,19 +143,19 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": " <#2EC4B6></> <#FFFFFF>pwsh</> "
+          "template": " <#3A86FF></> <#FFFFFF>pwsh</> "
         },
         {
           "type": "text",
           "style": "plain",
-          "foreground": "#444444",
+          "foreground": "#5C6370",
           "background": "transparent",
           "template": " | "
         },
         {
           "type": "text",
           "style": "plain",
-          "foreground": "#999999",
+          "foreground": "#8D99AE",
           "background": "transparent",
           "template": " {{ if gt .Code 0 }}<#FF2740></>{{ else }}{{ end }} "
         }
