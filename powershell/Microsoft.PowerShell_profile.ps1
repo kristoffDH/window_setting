@@ -1886,12 +1886,12 @@ function del-host {
 
 
 #########################################################
-# SCP 파일 전송 (up/dn/rr) 영역 Start
+# SCP 파일 전송 / 원격 조회 (up/dn/rr/rl) 영역 Start
 #########################################################
 
 function Test-ScpReady {
     # fnc-ignore
-    # up/dn/rr 실행 전 scp 존재 여부와 $SV 계열(-RequireDst면 $DST 계열까지) 설정 여부를 확인한다.
+    # up/dn/rr/rl 실행 전 scp 존재 여부와 $SV 계열(-RequireDst면 $DST 계열까지) 설정 여부를 확인한다.
     param([switch]$RequireDst)
 
     if (-not (Get-Command scp -ErrorAction SilentlyContinue)) {
@@ -1917,7 +1917,7 @@ function Test-ScpReady {
 
 function set-svdir
 {
-    # 원격 작업 디렉터리($SVDIR)를 지정한다. up/dn/rr의 상대 경로 기준이 된다. (축약: sw, -c: 해제 = xw)
+    # 원격 작업 디렉터리($SVDIR)를 지정한다. up/dn/rr/rl의 상대 경로 기준이 된다. (축약: sw, -c: 해제 = xw)
     param(
         [Parameter(Position = 0)]
         [string]$Path,
@@ -1937,7 +1937,7 @@ function set-svdir
     if ([string]::IsNullOrWhiteSpace($Path)) {
         if ([string]::IsNullOrWhiteSpace($global:SVDIR)) {
             Write-Host "사용법: sw <원격 디렉터리>   (Tab 자동완성 지원, 해제: xw)" -ForegroundColor Yellow
-            Write-Host "  설정하면 up/dn/rr의 상대 경로가 이 디렉터리 기준으로 해석됩니다." -ForegroundColor DarkCyan
+            Write-Host "  설정하면 up/dn/rr/rl의 상대 경로가 이 디렉터리 기준으로 해석됩니다." -ForegroundColor DarkCyan
         }
         else {
             Write-Host ("현재 원격 작업 디렉터리: {0}:{1}" -f $global:SV, $global:SVDIR) -ForegroundColor Green
@@ -2190,7 +2190,70 @@ function rr # scp -3 remote ($SV) -> remote ($DST), 로컬 경유 전송 (대상
     }
 }
 
-# up/dn/rr 원격 경로 자동완성 공용: Tab을 누를 때마다 ssh로 원격 디렉터리 목록을 조회한다. (캐시 없음)
+function rl # ls remote ($SV), 경로 생략 시 $SVDIR 목록, -로 시작하는 인자는 원격 ls 옵션으로 전달
+{
+    # param으로 받으면 -t, -r 같은 ls 옵션이 PowerShell 매개변수로 해석되므로 $args를 직접 나눈다.
+    $options = @()
+    $paths = @()
+
+    foreach ($arg in $args) {
+        $text = [string]$arg
+        if ($text.StartsWith('-')) { $options += $text } else { $paths += $text }
+    }
+
+    if (-not (Test-ScpReady)) { return }
+
+    # 경로를 생략하면 $SVDIR(미설정이면 원격 홈)을 보여준다. 상대 경로 해석은 up/dn과 같다.
+    if ($paths.Count -eq 0) { $paths = @('') }
+
+    $shown = @()
+    $quoted = @()
+
+    foreach ($path in $paths) {
+        $resolved = Resolve-SvRemotePath -Path $path
+        $shown += $resolved
+
+        # 원격 셸이 공백 경로를 쪼개지 않게 따옴표로 감싼다. ~는 따옴표 안에서 펼쳐지지 않아 $HOME으로 바꾸고,
+        # 마지막 이름에 와일드카드(*.log 등)가 있으면 그 부분만 따옴표 밖에 두어 원격 셸이 펼치게 한다.
+        $dirPart = $resolved
+        $namePart = ''
+        $slash = $resolved.LastIndexOf('/')
+        $leaf = $resolved.Substring($slash + 1)
+
+        if ($leaf.IndexOfAny([char[]]@('*', '?')) -ge 0) {
+            $dirPart = $resolved.Substring(0, $slash + 1)
+            $namePart = $leaf
+        }
+
+        if ($dirPart -eq '~' -or $dirPart.StartsWith('~/')) {
+            $dirPart = '$HOME' + $dirPart.Substring(1)
+        }
+
+        $quoted += if ($dirPart) { '"' + $dirPart + '"' + $namePart } else { $namePart }
+    }
+
+    # 다른 명령으로 넘길 때(rl | sls log)는 색상 코드가 섞이지 않게 끈다.
+    $color = if ($MyInvocation.PipelinePosition -lt $MyInvocation.PipelineLength) { '--color=never' } else { '--color=always' }
+    $remoteCmd = (@('ls', '-alh', $color) + $options + $quoted) -join ' '
+
+    Write-Host ("list: {0}:{1} ({2}:{3})" -f $global:SV, ($shown -join ' '), $global:SVIP, $global:SVPORT) -ForegroundColor Green
+
+    # config의 Host * RemoteCommand와 충돌하지 않게 무효화하고, 한글 파일명이 깨지지 않게 조회 중에만 UTF-8로 받는다.
+    $prevEncoding = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+        & ssh -o BatchMode=yes -o ConnectTimeout=5 -o RemoteCommand=none -o RequestTTY=no -p $global:SVPORT $global:SV $remoteCmd
+    }
+    finally {
+        [Console]::OutputEncoding = $prevEncoding
+    }
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error ("원격 목록 조회 실패 (exit code: {0})" -f $LASTEXITCODE)
+    }
+}
+
+# up/dn/rr/rl 원격 경로 자동완성 공용: Tab을 누를 때마다 ssh로 원격 디렉터리 목록을 조회한다. (캐시 없음)
 function Get-SshRemotePathCompletion {
     # fnc-ignore
     param(
@@ -2329,15 +2392,33 @@ Register-ArgumentCompleter -CommandName rr -ParameterName DestPath -ScriptBlock 
     Get-SshRemotePathCompletion -HostAlias $dst.Value -Port ([string]$dstport.Value) -WordToComplete $wordToComplete -DirOnly
 }
 
+# rl은 ls 옵션을 살리려고 $args로 받으므로 매개변수 이름이 없어 Native 완성기로 등록한다.
+# SV 기준 파일+디렉터리 후보를 보여주고, -로 시작하는 단어(ls 옵션)는 완성하지 않는다.
+Register-ArgumentCompleter -Native -CommandName rl -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+
+    if ($wordToComplete.StartsWith('-')) { return }
+
+    $sv = Get-Variable SV -Scope Global -ErrorAction SilentlyContinue
+    $svport = Get-Variable SVPORT -Scope Global -ErrorAction SilentlyContinue
+
+    if (-not $sv -or [string]::IsNullOrWhiteSpace([string]$sv.Value) -or
+        -not $svport -or [string]::IsNullOrWhiteSpace([string]$svport.Value)) {
+        return
+    }
+
+    Get-SshRemotePathCompletion -HostAlias $sv.Value -Port ([string]$svport.Value) -WordToComplete $wordToComplete -BaseDir ([string]$global:SVDIR)
+}
+
 #########################################################
-# SCP 파일 전송 (up/dn/rr) 영역 End
+# SCP 파일 전송 / 원격 조회 (up/dn/rr/rl) 영역 End
 #########################################################
 
 
 #########################################################
 # ssh 원격 관리 도움말 영역 Start
 #########################################################
-# 위 SSH/SCP 영역의 원격 명령(ss/sd/sb/xs/xd/c/auth/sw/xw/up/dn/rr)을 사용 흐름 순서로 정리한 가이드.
+# 위 SSH/SCP 영역의 원격 명령(ss/sd/sb/xs/xd/c/auth/sw/xw/rl/up/dn/rr)을 사용 흐름 순서로 정리한 가이드.
 # 원격 명령을 고치면 이 설명도 함께 갱신할 것. (구 ssh-help.ps1에서 프로필로 병합)
 
 function Show-HelpPager {
@@ -2467,7 +2548,7 @@ function ssh-help {
 
     # ── 전체 흐름 ────────────────────────────────────────────────
     Add-Title "[ 전체 흐름 ]"
-    Add-Plain "  $esc[92mss$esc[0m 서버 선택  ->  $esc[92mc$esc[0m 접속 / $esc[92msw$esc[0m 원격 경로 고정  ->  $esc[92mup dn$esc[0m 파일 전송"
+    Add-Plain "  $esc[92mss$esc[0m 서버 선택  ->  $esc[92mc$esc[0m 접속 / $esc[92msw$esc[0m 원격 경로 고정  ->  $esc[92mrl$esc[0m 목록 확인 / $esc[92mup dn$esc[0m 파일 전송"
     Add-Plain "  서버간 전송은 $esc[92msd$esc[0m 로 대상까지 고른 뒤 $esc[92mrr$esc[0m."
     Add-Plain ""
     Add-Plain "  선택 상태는 프롬프트 윗줄에 표시된다 - SV | ID | IP | PORT | DIR (DST는 아래 줄)."
@@ -2477,7 +2558,7 @@ function ssh-help {
     Add-Section "명령"
     Add-Cmd "ss [별칭]"        "작업 서버(SV) 선택. 인자 없으면 목록에서 방향키로 고른다"
     Add-Note "Tab: ssh config의 Host 별칭 자동완성"
-    Add-Cmd "sd [별칭]"        "전송 대상(DST) 선택 - rr 전용이며 up/dn과는 무관"
+    Add-Cmd "sd [별칭]"        "전송 대상(DST) 선택 - rr 전용이며 up/dn/rl과는 무관"
     Add-Cmd "sb <SV> <DST>"    "SV와 DST를 한 번에 선택 (= ss + sd, 두 인자 모두 Tab 자동완성)"
     Add-Cmd "xs"               "SV 해제 (원격 작업 디렉터리 SVDIR도 함께 해제)"
     Add-Cmd "xd"               "DST 해제"
@@ -2504,7 +2585,7 @@ function ssh-help {
     Add-Cmd "rsa-pubkey"       "로컬 공개키(id_rsa.pub) 내용을 출력한다"
 
     # ── 3. 원격 작업 디렉터리 ────────────────────────────────────
-    Add-Title "[ 3. 원격 작업 디렉터리 (SVDIR) ]"
+    Add-Title "[ 3. 원격 작업 디렉터리 (SVDIR) / 목록 조회 ]"
     Add-Plain "  매번 긴 원격 경로를 치지 않도록 기준 디렉터리를 세션에 고정한다."
     Add-Section "명령"
     Add-Cmd "sw <원격경로>"    "기준 디렉터리 지정 (원격에 실제로 있는지 확인한 뒤 설정)"
@@ -2512,12 +2593,18 @@ function ssh-help {
     Add-Cmd "sw"               "현재 설정값 확인"
     Add-Cmd "xw"               "해제 (기준이 다시 원격 홈으로 돌아간다)"
 
+    Add-Section "목록 조회"
+    Add-Cmd "rl [경로] [옵션]"  "SV의 원격 목록을 ls -alh로 표시 (경로를 생략하면 SVDIR)"
+    Add-Note "Tab: SVDIR 안의 파일/디렉터리 후보"
+    Add-Note "- 로 시작하는 인자는 ls 옵션: rl logs -t (최신순), rl -S (크기순)"
+    Add-Note "rl '*.log' 처럼 와일드카드도 가능 (서버 셸이 펼친다)"
+
     Add-Section "경로 해석 규칙"
     Add-Cmd "test.txt"         "상대 경로 -> SVDIR 기준 (SVDIR이 없으면 원격 홈)"
     Add-Cmd "sub/a.log"        "하위 경로도 동일"
     Add-Cmd "/var/log/a.log"   "/ 로 시작하면 SVDIR을 벗어난다"
     Add-Cmd "~/a.log"          "~ 로 시작하면 원격 홈 기준 - 역시 SVDIR 무시"
-    Add-Note "up / dn / rr(1번째 인자)과 자동완성 모두 같은 규칙을 따른다"
+    Add-Note "up / dn / rr(1번째 인자) / rl과 자동완성 모두 같은 규칙을 따른다"
 
     # ── 4. 파일 전송 ─────────────────────────────────────────────
     Add-Title "[ 4. 파일 전송 ]"
@@ -2540,6 +2627,7 @@ function ssh-help {
     Add-Section "로그 한 개 받아오기"
     Add-Plain "    ss myhost           # 서버 선택"
     Add-Plain "    sw /var/log         # 기준 경로 고정"
+    Add-Plain "    rl -t               # /var/log 목록을 최신순으로 확인"
     Add-Plain "    dn mes<Tab>         # /var/log 안에서 자동완성 -> dn messages"
     Add-Section "패치 파일 올리고 확인하기"
     Add-Plain "    up patch.tar        # sw로 잡아둔 경로로 업로드"
@@ -2553,7 +2641,7 @@ function ssh-help {
     # ── 6. 문제 해결 ─────────────────────────────────────────────
     Add-Title "[ 6. 자주 겪는 문제 ]"
     Add-Cmd "자동완성이 로컬 경로" "SV 미선택이거나 키 인증이 안 된 상태 - ss 후 auth 실행"
-    Add-Cmd "변수 미설정 안내"    "up/dn은 ss가, rr은 ss + sd가 모두 필요하다"
+    Add-Cmd "변수 미설정 안내"    "up/dn/rl은 ss가, rr은 ss + sd가 모두 필요하다"
     Add-Cmd "호스트 키 경고"     "REMOTE HOST IDENTIFICATION HAS CHANGED - auth가 자동 정리한다"
     Add-Note "수동으로 지우려면 del-host <IP> (known_hosts 자동 백업 후 해당 항목 삭제)"
     Add-Cmd "전체 명령 목록"     "fnc (함수 목록) / fnc-alias (alias 목록)"

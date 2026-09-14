@@ -8,7 +8,7 @@
   "transient_prompt": {
     "foreground": "#FFFFFF",
     "background": "transparent",
-    "template": "<#3A86FF>󰷏</>  <#3A86FF>[</> <#FFFFFF>{{ .PWD }}</> <#3A86FF>]</> "
+    "template": "<#3A86FF>󰝰</>  <#3A86FF>[</> <#FFFFFF>{{ .PWD }}</> <#3A86FF>]</> "
   },
 
   "blocks": [
@@ -35,7 +35,7 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": "{{ $sv := .Env.OMP_SV }}{{ $svid := .Env.OMP_SVID }}{{ $svip := .Env.OMP_SVIP }}{{ $svport := .Env.OMP_SVPORT }}{{ $svdir := .Env.OMP_SVDIR }}{{ if $sv }} <#2EC4B6></> <#FFFFFF><#2EC4B6>SV</>  : {{ $sv }}{{ if $svid }} <#5C6370>|</> <#2EC4B6>󰀓 </>ID : {{ $svid }}{{ end }}{{ if $svip }} <#5C6370>|</> <#2EC4B6> </>IP : {{ $svip }}{{ end }}{{ if $svport }} <#5C6370>|</> <#2EC4B6> </>PORT : {{ $svport }}{{ end }}{{ if $svdir }} <#5C6370>|</> <#2EC4B6> </>DIR : {{ $svdir }}{{ end }}</> {{ end }}"
+          "template": "{{ $sv := .Env.OMP_SV }}{{ $svid := .Env.OMP_SVID }}{{ $svip := .Env.OMP_SVIP }}{{ $svport := .Env.OMP_SVPORT }}{{ $svdir := .Env.OMP_SVDIR }}{{ if $sv }} <#2EC4B6>󰒋</> <#FFFFFF><#2EC4B6>SV</>  : {{ $sv }}{{ if $svid }} <#5C6370>|</> <#2EC4B6>󰀄 </>ID : {{ $svid }}{{ end }}{{ if $svip }} <#5C6370>|</> <#2EC4B6>󰇧 </>IP : {{ $svip }}{{ end }}{{ if $svport }} <#5C6370>|</> <#2EC4B6>󰚥 </>PORT : {{ $svport }}{{ end }}{{ if $svdir }} <#5C6370>|</> <#2EC4B6>󰉋 </>DIR : {{ $svdir }}{{ end }}</> {{ end }}"
         }
       ]
     },    
@@ -49,7 +49,7 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": "{{ $dst := .Env.OMP_DST }}{{ $dstid := .Env.OMP_DSTID }}{{ $dstip := .Env.OMP_DSTIP }}{{ $dstport := .Env.OMP_DSTPORT }}{{ if $dst }} <#E76F51></> <#FFFFFF><#E76F51>DST</> : {{ $dst }}{{ if $dstid }} <#5C6370>|</> <#E76F51>󰀓 </>ID : {{ $dstid }}{{ end }}{{ if $dstip }} <#5C6370>|</> <#E76F51> </>IP : {{ $dstip }}{{ end }}{{ if $dstport }} <#5C6370>|</> <#E76F51> </>PORT : {{ $dstport }}{{ end }}</> {{ end }}"
+          "template": "{{ $dst := .Env.OMP_DST }}{{ $dstid := .Env.OMP_DSTID }}{{ $dstip := .Env.OMP_DSTIP }}{{ $dstport := .Env.OMP_DSTPORT }}{{ if $dst }} <#E76F51>󰒊</> <#FFFFFF><#E76F51>DST</> : {{ $dst }}{{ if $dstid }} <#5C6370>|</> <#E76F51>󰀄 </>ID : {{ $dstid }}{{ end }}{{ if $dstip }} <#5C6370>|</> <#E76F51>󰇧 </>IP : {{ $dstip }}{{ end }}{{ if $dstport }} <#5C6370>|</> <#E76F51>󰚥 </>PORT : {{ $dstport }}{{ end }}</> {{ end }}"
         }
       ]
     },
@@ -63,7 +63,7 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": " <#3A86FF>󰷏</>  <#3A86FF>[</> <#FFFFFF>{{ .Path }}</> <#3A86FF>]</>  ",
+          "template": " <#3A86FF>󰝰</>  <#3A86FF>[</> <#FFFFFF>{{ .Path }}</> <#3A86FF>]</>  ",
           "properties": {
             "style": "full",
             "right_format": "<#8AB4FF>%s</>"
@@ -100,14 +100,14 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": "<#FF2740> </>{{ .Code }} <#5C6370>|</> "
+          "template": "<#FF2740>󰅙 </>{{ .Code }} <#5C6370>|</> "
         },
         {
           "type": "executiontime",
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": "<#F28FAD>󰔟 </>{{ .FormattedMs }} <#5C6370>|</> ",
+          "template": "<#F28FAD>󱎫 </>{{ .FormattedMs }} <#5C6370>|</> ",
           "properties": {
             "threshold": 3000,
             "style": "austin"
@@ -118,14 +118,14 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": "{{ if .Env.OMP_TAG }}<#D19BFF> </>{{ trimPrefix \"IP : \" .Env.OMP_TAG }} <#5C6370>|</> {{ end }}"
+          "template": "{{ if .Env.OMP_TAG }}<#D19BFF>󰍹 </>{{ trimPrefix \"IP : \" .Env.OMP_TAG }} <#5C6370>|</> {{ end }}"
         },
         {
           "type": "time",
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": "<#D19BFF>󰅐 </>{{ .CurrentDate | date .Format }}",
+          "template": "<#D19BFF>󰥔 </>{{ .CurrentDate | date .Format }}",
           "properties": {
             "time_format": "15:04:05"
           }
@@ -143,7 +143,7 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": " <#3A86FF></> <#FFFFFF>pwsh</> "
+          "template": " <#3A86FF>󰨊</> <#FFFFFF>pwsh</> "
         },
         {
           "type": "text",
