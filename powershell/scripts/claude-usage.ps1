@@ -43,7 +43,8 @@ function cu-pull {
     }
 
     # 임시 파일로 받아 비교한 뒤 교체한다 (전송·해석 실패 시 기존 파일 보존)
-    scp -q -o RemoteCommand=none "$($global:cu_host):claude-usage/usage.csv" $tmp
+    # BatchMode: 작업 스케줄러 같은 무인 실행에서 암호 입력을 기다리며 멈추지 않도록 한다
+    scp -q -o BatchMode=yes -o ConnectTimeout=15 -o RemoteCommand=none "$($global:cu_host):claude-usage/usage.csv" $tmp
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $tmp)) {
         Remove-Item $tmp -ErrorAction SilentlyContinue
         Write-Warning '내려받기 실패 - 기존 파일은 그대로 둡니다. (cu-status 로 서버 상태 확인)'

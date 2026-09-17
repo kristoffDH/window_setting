@@ -3,7 +3,7 @@
   "version": 3,
   "final_space": true,
   "disable_notice": true,
-  "console_title_template": "{{ .Shell }} in {{ .Folder }}",
+  "console_title_template": "{{ if .Env.OMP_TITLE }}{{ .Env.OMP_TITLE }}{{ end }}",
 
   "transient_prompt": {
     "foreground": "#FFFFFF",
@@ -35,7 +35,7 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": "{{ $sv := .Env.OMP_SV }}{{ $svid := .Env.OMP_SVID }}{{ $svip := .Env.OMP_SVIP }}{{ $svport := .Env.OMP_SVPORT }}{{ $svdir := .Env.OMP_SVDIR }}{{ if $sv }} <#2EC4B6>󰒋</> <#FFFFFF><#2EC4B6>SV</>  : {{ $sv }}{{ if $svid }} <#5C6370>|</> <#2EC4B6>󰀄 </>ID : {{ $svid }}{{ end }}{{ if $svip }} <#5C6370>|</> <#2EC4B6>󰇧 </>IP : {{ $svip }}{{ end }}{{ if $svport }} <#5C6370>|</> <#2EC4B6>󰚥 </>PORT : {{ $svport }}{{ end }}{{ if $svdir }} <#5C6370>|</> <#2EC4B6>󰉋 </>DIR : {{ $svdir }}{{ end }}</> {{ end }}"
+          "template": "{{ $sv := .Env.OMP_SV }}{{ $svid := .Env.OMP_SVID }}{{ $svip := .Env.OMP_SVIP }}{{ $svport := .Env.OMP_SVPORT }}{{ $svdir := .Env.OMP_SVDIR }}{{ if $sv }} <#2EC4B6>󰒋</> <#FFFFFF>SV  : {{ $sv }}{{ if $svid }} <#5C6370>|</> <#2EC4B6>󰀄 </>ID : {{ $svid }}{{ end }}{{ if $svip }} <#5C6370>|</> <#2EC4B6>󰇧 </>IP : {{ $svip }}{{ end }}{{ if $svport }} <#5C6370>|</> <#2EC4B6>󰚥 </>PORT : {{ $svport }}{{ end }}{{ if $svdir }} <#5C6370>|</> <#2EC4B6>󰉋 </>DIR : {{ $svdir }}{{ end }}</> {{ end }}"
         }
       ]
     },    
@@ -49,7 +49,7 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": "{{ $dst := .Env.OMP_DST }}{{ $dstid := .Env.OMP_DSTID }}{{ $dstip := .Env.OMP_DSTIP }}{{ $dstport := .Env.OMP_DSTPORT }}{{ if $dst }} <#E76F51>󰒊</> <#FFFFFF><#E76F51>DST</> : {{ $dst }}{{ if $dstid }} <#5C6370>|</> <#E76F51>󰀄 </>ID : {{ $dstid }}{{ end }}{{ if $dstip }} <#5C6370>|</> <#E76F51>󰇧 </>IP : {{ $dstip }}{{ end }}{{ if $dstport }} <#5C6370>|</> <#E76F51>󰚥 </>PORT : {{ $dstport }}{{ end }}</> {{ end }}"
+          "template": "{{ $dst := .Env.OMP_DST }}{{ $dstid := .Env.OMP_DSTID }}{{ $dstip := .Env.OMP_DSTIP }}{{ $dstport := .Env.OMP_DSTPORT }}{{ if $dst }} <#E76F51>󰒊</> <#FFFFFF>DST : {{ $dst }}{{ if $dstid }} <#5C6370>|</> <#E76F51>󰀄 </>ID : {{ $dstid }}{{ end }}{{ if $dstip }} <#5C6370>|</> <#E76F51>󰇧 </>IP : {{ $dstip }}{{ end }}{{ if $dstport }} <#5C6370>|</> <#E76F51>󰚥 </>PORT : {{ $dstport }}{{ end }}</> {{ end }}"
         }
       ]
     },

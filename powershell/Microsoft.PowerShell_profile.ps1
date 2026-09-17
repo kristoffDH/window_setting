@@ -179,6 +179,29 @@ function reload
     $env:POSH_CONFIG = $configPath
 }
 
+function del-cache
+{
+    # oh-my-posh init 캐시(pwsh-init-omp.ps1)를 삭제한다. 새 창에서 현재 테마로 다시 만든다. (테마를 복사해 온 뒤 옛 테마가 남을 때)
+    # 복사한 테마는 원래 수정 시각을 유지해 캐시보다 오래돼 보일 수 있어, 자동 재생성이 안 될 때 쓴다.
+    $cache = $omp_init_cache
+
+    if (-not (Test-Path -LiteralPath $cache)) {
+        Write-Host ("삭제할 캐시가 없습니다: {0}" -f $cache) -ForegroundColor Yellow
+        return
+    }
+
+    try {
+        Remove-Item -LiteralPath $cache -ErrorAction Stop
+    }
+    catch {
+        Write-Error ("캐시 삭제 실패: {0}" -f $_.Exception.Message)
+        return
+    }
+
+    Write-Host ("oh-my-posh init 캐시를 삭제했습니다: {0}" -f $cache) -ForegroundColor Green
+    Write-Host "새 창을 열면 현재 테마로 캐시를 다시 만듭니다." -ForegroundColor DarkCyan
+}
+
 #########################################################
 # 프롬프트(Oh My Posh) 관리 영역 End
 #########################################################
@@ -2580,7 +2603,8 @@ function ssh-help {
     Add-Note "예: auth user@10.0.0.5 2222  /  auth myhost (config 별칭은 포트 자동)"
     Add-Note "IP 재사용 등으로 호스트 키가 바뀐 서버는 known_hosts 항목을 자동 정리한 뒤 등록한다"
     Add-Cmd "p"                "선택된 SVIP로 ping (= ping-test)"
-    Add-Cmd "d [-r|-l|-u|-d]"  "현재 세션을 화면 분할로 복제 (= dup, 기본 -r 우측)"
+    Add-Cmd "d [-r|-l|-u|-d|-g]" "현재 세션을 화면 분할로 복제 (= dup, 기본 -r 우측)"
+    Add-Note "-g: 2x2 4분할 (세로 분할 후 양쪽을 가로 분할, 포커스는 원래 pane)"
     Add-Note "새 pane이 SV/DST/SVDIR 선택 상태를 그대로 이어받는다"
     Add-Cmd "rsa-pubkey"       "로컬 공개키(id_rsa.pub) 내용을 출력한다"
 
@@ -2659,17 +2683,18 @@ function ssh-help {
 # 터미널 세션 복제 (dup) 영역 Start
 #########################################################
 
-function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 우측 | -l 좌측 | -u 상단 | -d 하단, 기본 -r)
+function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 우측 | -l 좌측 | -u 상단 | -d 하단 | -g 4분할, 기본 -r)
 {
     param(
         [Alias('r')][switch]$Right,
         [Alias('l')][switch]$Left,
         [Alias('u')][switch]$Up,
-        [Alias('d')][switch]$Down
+        [Alias('d')][switch]$Down,
+        [Alias('g')][switch]$Grid
     )
 
-    if (@($Right, $Left, $Up, $Down).Where({ $_ }).Count -gt 1) {
-        Write-Host "사용법: dup [-r|-l|-u|-d]  (방향은 하나만, 생략하면 -r 우측)" -ForegroundColor Yellow
+    if (@($Right, $Left, $Up, $Down, $Grid).Where({ $_ }).Count -gt 1) {
+        Write-Host "사용법: dup [-r|-l|-u|-d|-g]  (하나만, 생략하면 -r 우측, -g는 2x2 4분할)" -ForegroundColor Yellow
         return
     }
 
@@ -2698,43 +2723,409 @@ function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 
             $lines.Add(("`$global:{0} = {1}" -f $name, [int]$port.Value))
         }
     }
-    foreach ($name in 'OMP_SV', 'OMP_SVID', 'OMP_SVIP', 'OMP_SVPORT', 'OMP_SVDIR', 'OMP_DST', 'OMP_DSTID', 'OMP_DSTIP', 'OMP_DSTPORT') {
+    foreach ($name in 'OMP_SV', 'OMP_SVID', 'OMP_SVIP', 'OMP_SVPORT', 'OMP_SVDIR', 'OMP_DST', 'OMP_DSTID', 'OMP_DSTIP', 'OMP_DSTPORT', 'OMP_TITLE', 'OMP_TABCOLOR') {
         $value = [Environment]::GetEnvironmentVariable($name)
         if ($value) {
             $lines.Add(("`$env:{0} = '{1}'" -f $name, ($value -replace "'", "''")))
         }
+    }
+    # 탭은 활성 pane의 제목/색을 따르므로 새 pane에도 같은 탭 색을 적용한다 (제목은 omp가 OMP_TITLE로 쓴다).
+    if ($env:OMP_TABCOLOR) {
+        $lines.Add('Write-TabColorSequence $env:OMP_TABCOLOR')
     }
     if ($global:SV) {
         $lines.Add(("Write-Host 'dup: `$SV={0} 세션을 복제했습니다.' -ForegroundColor DarkCyan" -f ([string]$global:SV -replace "'", "''")))
     }
     $lines.Add('Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue')
 
-    $initPath = Join-Path ([IO.Path]::GetTempPath()) ("dup_{0}.ps1" -f [guid]::NewGuid().ToString('N'))
-    Set-Content -LiteralPath $initPath -Value $lines -Encoding utf8BOM
+    # 새 pane마다 init 스크립트를 실행한 뒤 스스로 지우므로, 만들 pane 수만큼 사본을 둔다.
+    $paneCount = if ($Grid) { 3 } else { 1 }
+    $initPaths = @(for ($i = 0; $i -lt $paneCount; $i++) {
+        $path = Join-Path ([IO.Path]::GetTempPath()) ("dup_{0}.ps1" -f [guid]::NewGuid().ToString('N'))
+        Set-Content -LiteralPath $path -Value $lines -Encoding utf8BOM
+        $path
+    })
 
     # 새 pane은 현재와 같은 쉘 실행 파일, 같은 작업 경로로 시작한다.
     $cwd = if ($PWD.Provider.Name -eq 'FileSystem') { $PWD.ProviderPath } else { $HOME }
     $shell = (Get-Process -Id $PID).Path
 
-    # wt split-pane은 새 pane을 우측(-V)/하단(-H)에만 만들 수 있으므로,
-    # 좌측/상단은 분할 직후 swap-pane으로 기존 pane과 자리를 맞바꿔 구현한다.
-    $splitDir = if ($Up -or $Down) { '-H' } else { '-V' }
-    $swapArgs = @()
-    if ($Left) { $swapArgs = @(';', 'swap-pane', 'left') }
-    elseif ($Up) { $swapArgs = @(';', 'swap-pane', 'up') }
+    if ($Grid) {
+        # 4분할(2x2): 세로 분할로 우측 pane을 만들고 그 pane을 가로 분할한 뒤,
+        # 좌측(원래 pane)으로 포커스를 옮겨 가로 분할한다. 새 pane이 포커스를 가져가므로 마지막에 원래 pane(좌상단)으로 돌아온다.
+        $wtArgs = @(
+            'split-pane', '-V', '-d', $cwd, $shell, '-NoExit', '-File', $initPaths[0], ';',
+            'split-pane', '-H', '-d', $cwd, $shell, '-NoExit', '-File', $initPaths[1], ';',
+            'move-focus', 'left', ';',
+            'split-pane', '-H', '-d', $cwd, $shell, '-NoExit', '-File', $initPaths[2], ';',
+            'move-focus', 'up'
+        )
+    }
+    else {
+        # wt split-pane은 새 pane을 우측(-V)/하단(-H)에만 만들 수 있으므로,
+        # 좌측/상단은 분할 직후 swap-pane으로 기존 pane과 자리를 맞바꿔 구현한다.
+        $splitDir = if ($Up -or $Down) { '-H' } else { '-V' }
+        $wtArgs = @('split-pane', $splitDir, '-d', $cwd, $shell, '-NoExit', '-File', $initPaths[0])
+        if ($Left) { $wtArgs += ';', 'swap-pane', 'left' }
+        elseif ($Up) { $wtArgs += ';', 'swap-pane', 'up' }
+    }
 
-    & wt -w 0 split-pane $splitDir -d $cwd $shell -NoExit -File $initPath @swapArgs
+    & wt -w 0 @wtArgs
     if ($LASTEXITCODE -ne 0) {
-        Remove-Item -LiteralPath $initPath -Force -ErrorAction SilentlyContinue
+        $initPaths | ForEach-Object { Remove-Item -LiteralPath $_ -Force -ErrorAction SilentlyContinue }
         Write-Error ("pane 분할에 실패했습니다 (exit code: {0})" -f $LASTEXITCODE)
     }
 }
 
 function d {
-    # alias-fn: 현재 세션을 복제해 화면 분할한다. (= dup, -r/-l/-u/-d 인자 그대로 전달)
+    # alias-fn: 현재 세션을 복제해 화면 분할한다. (= dup, -r/-l/-u/-d/-g 인자 그대로 전달)
     dup @args
 }
 
 #########################################################
 # 터미널 세션 복제 (dup) 영역 End
+#########################################################
+
+
+#########################################################
+# 터미널 탭 제목 / 색상 (tt/tc/tb) 영역 Start
+#########################################################
+# WT 탭은 활성 pane의 제목과 탭 색을 따른다.
+# - 제목: OSC 2. WT pwsh 프로필들에 suppressApplicationTitle=false가 필요하고,
+#   oh-my-posh가 프롬프트마다 console_title_template({{ .Env.OMP_TITLE }})로 다시 쓰므로 상태는 $env:OMP_TITLE에 둔다.
+#   빈 제목을 보내면 WT가 프로필 이름으로 되돌린다.
+# - 탭 색: WT 팔레트 264번(FRAME_BACKGROUND)이 탭 배경색이라 OSC 4로 RGB를 넣고 OSC 104로 되돌린다.
+#   --tabColor로 연 탭이나 탭 우클릭으로 색을 고른 탭은 WT가 그 색을 우선한다. 상태는 $env:OMP_TABCOLOR.
+# 두 값 모두 dup이 새 pane에 넘겨, 분할 후 포커스가 옮겨가도 탭 모양이 유지된다.
+
+function Get-TabColorPalette {
+    # fnc-ignore
+    # tc 색 목록 (Id는 입력/자동완성용, Name은 표시용). 프롬프트 팔레트 계열로 맞췄다. Hex가 비면 기본(색 없음).
+    @(
+        [pscustomobject]@{ Id = 'default'; Name = '기본';     Hex = '' }
+        [pscustomobject]@{ Id = 'red';     Name = '빨강';     Hex = '#FF2740' }
+        [pscustomobject]@{ Id = 'coral';   Name = '코랄';     Hex = '#E76F51' }
+        [pscustomobject]@{ Id = 'orange';  Name = '주황';     Hex = '#F4A261' }
+        [pscustomobject]@{ Id = 'yellow';  Name = '황색';     Hex = '#E9C46A' }
+        [pscustomobject]@{ Id = 'green';   Name = '초록';     Hex = '#90BE6D' }
+        [pscustomobject]@{ Id = 'teal';    Name = '청록';     Hex = '#2EC4B6' }
+        [pscustomobject]@{ Id = 'sky';     Name = '하늘';     Hex = '#5BC0EB' }
+        [pscustomobject]@{ Id = 'blue';    Name = '파랑';     Hex = '#3A86FF' }
+        [pscustomobject]@{ Id = 'purple';  Name = '보라';     Hex = '#B06CF5' }
+        [pscustomobject]@{ Id = 'lilac';   Name = '라일락';   Hex = '#D19BFF' }
+        [pscustomobject]@{ Id = 'pink';    Name = '분홍';     Hex = '#F28FAD' }
+        [pscustomobject]@{ Id = 'slate';   Name = '슬레이트'; Hex = '#8D99AE' }
+        [pscustomobject]@{ Id = 'gray';    Name = '회색';     Hex = '#4A4F5A' }
+    )
+}
+
+function Write-TabColorSequence {
+    # fnc-ignore
+    # 현재 pane의 탭 색을 바꾼다. 빈 값이면 원래 색(없음)으로 되돌린다.
+    param([string]$Hex)
+
+    $esc = [char]27
+
+    if ([string]::IsNullOrWhiteSpace($Hex)) {
+        [Console]::Write("$esc]104;264$esc\")
+        return
+    }
+
+    $h = $Hex.TrimStart('#')
+    [Console]::Write(("$esc]4;264;rgb:{0}/{1}/{2}$esc\" -f $h.Substring(0, 2), $h.Substring(2, 2), $h.Substring(4, 2)))
+}
+
+function Write-TabTitleSequence {
+    # fnc-ignore
+    # 현재 pane의 제목을 바꾼다. 빈 값이면 WT가 프로필 이름으로 되돌린다.
+    param([string]$Title)
+
+    $esc = [char]27
+    $clean = $Title -replace '[\x00-\x1f\x7f]', ''
+    [Console]::Write("$esc]2;$clean$esc\")
+}
+
+function Select-TabPickerItem {
+    # fnc-ignore
+    # tt/tc 공용 선택 화면. 대체 화면 버퍼에 목록을 띄우고 커서가 움직일 때마다 OnMove로 탭에 바로 미리보기한다.
+    # 선택한 번호를 돌려주고, Esc/q/Ctrl+C로 나가면 OnCancel로 원래 모양을 되돌린 뒤 -1을 돌려준다.
+    param(
+        [string]$Header,
+        [string[]]$Rows,
+        [int]$StartIndex = 0,
+        [scriptblock]$OnMove,
+        [scriptblock]$OnCancel
+    )
+
+    $esc = [char]27
+    $pos = $StartIndex
+    $chosen = -1
+
+    [Console]::Write("$esc[?1049h$esc[?25l")
+
+    try {
+        while ($true) {
+            if ($OnMove) { & $OnMove $pos }
+
+            $sb = [System.Text.StringBuilder]::new()
+            [void]$sb.Append("$esc[H$esc[2J")
+            [void]$sb.Append("$esc[93m$Header$esc[0m`n")
+            [void]$sb.Append("$esc[90m  ↑↓ 이동 (탭에 바로 미리보기) | Enter 적용 | Esc/q 취소$esc[0m`n`n")
+
+            for ($i = 0; $i -lt $Rows.Count; $i++) {
+                $cursor = if ($i -eq $pos) { "$esc[92m>$esc[0m" } else { ' ' }
+                [void]$sb.Append((" {0} {1}$esc[0m`n" -f $cursor, $Rows[$i]))
+            }
+
+            [Console]::Write($sb.ToString())
+
+            switch (Read-SshPickerKey) {
+                'UpArrow'   { $pos = ($pos - 1 + $Rows.Count) % $Rows.Count }
+                'DownArrow' { $pos = ($pos + 1) % $Rows.Count }
+                'Enter'     { $chosen = $pos; return $chosen }
+                'Escape'    { return -1 }
+                'Q'         { return -1 }
+            }
+        }
+    }
+    finally {
+        # Ctrl+C로 중단돼도 화면과 탭 모양을 원래대로 돌린다.
+        [Console]::Write("$esc[?1049l$esc[?25h")
+        if ($chosen -lt 0 -and $OnCancel) { & $OnCancel }
+    }
+}
+
+function set-tabcolor
+{
+    # 현재 탭 색상을 바꾼다. 인자 없으면 색 견본 목록에서 선택, 이름(Tab 완성)/RRGGBB 지정, default: 원래대로. (축약: tc, 제목까지 한 번에: tb)
+    # 적용하면 $true, 취소·실패면 $false를 돌려준다 (tb가 다음 단계로 갈지 판단).
+    param(
+        [Parameter(Position = 0)]
+        [string]$Color
+    )
+
+    if (-not $env:WT_SESSION) {
+        Write-Host "Windows Terminal 안에서 실행할 때만 탭 색을 바꿀 수 있습니다." -ForegroundColor Yellow
+        return $false
+    }
+
+    $esc = [char]27
+    $palette = @(Get-TabColorPalette)
+    $current = [string]$env:OMP_TABCOLOR
+
+    if ($Color) {
+        # 셸에서 #은 주석 시작이라 RRGGBB만 입력해도 되게 한다 ('#RRGGBB'처럼 따옴표로 감싸도 된다).
+        if ($Color -match '^#?[0-9A-Fa-f]{6}$') {
+            $picked = [pscustomobject]@{ Id = 'custom'; Name = '사용자 지정'; Hex = '#' + $Color.TrimStart('#').ToUpper() }
+        }
+        else {
+            $picked = $palette | Where-Object { $_.Id -eq $Color -or $_.Name -eq $Color } | Select-Object -First 1
+        }
+
+        if (-not $picked) {
+            Write-Host ("알 수 없는 색입니다: {0}  (tc 만 입력하면 목록, 이름은 Tab 자동완성, RRGGBB 직접 지정 가능)" -f $Color) -ForegroundColor Yellow
+            return $false
+        }
+    }
+    else {
+        $rows = foreach ($p in $palette) {
+            $swatch = if ($p.Hex) {
+                $h = $p.Hex.TrimStart('#')
+                "$esc[48;2;{0};{1};{2}m      $esc[0m" -f [Convert]::ToInt32($h.Substring(0, 2), 16), [Convert]::ToInt32($h.Substring(2, 2), 16), [Convert]::ToInt32($h.Substring(4, 2), 16)
+            }
+            else {
+                "$esc[90m  --  $esc[0m"
+            }
+            $isCurrent = ($p.Hex -and $p.Hex -eq $current) -or (-not $p.Hex -and -not $current)
+            $mark = if ($isCurrent) { "  $esc[92m(현재)$esc[0m" } else { '' }
+            # 한글은 두 칸이라 정렬 칸(-8)에는 영문/숫자만 넣고 설명은 맨 뒤에 붙인다.
+            $nameText = if ($p.Hex) { $p.Name } else { "{0} (색 없음)" -f $p.Name }
+            "{0}  {1,-8} {2,-8} {3}{4}" -f $swatch, $p.Id, $p.Hex, $nameText, $mark
+        }
+
+        $start = [Math]::Max(0, [array]::FindIndex($palette, [Predicate[object]] { param($p) ($p.Hex -and $p.Hex -eq $current) -or (-not $p.Hex -and -not $current) }))
+
+        $index = Select-TabPickerItem -Header '탭 색상 선택' -Rows $rows -StartIndex $start `
+            -OnMove { param($i) Write-TabColorSequence $palette[$i].Hex } `
+            -OnCancel { Write-TabColorSequence $current }
+
+        if ($index -lt 0) {
+            Write-Host "탭 색상 변경을 취소했습니다." -ForegroundColor DarkCyan
+            return $false
+        }
+
+        $picked = $palette[$index]
+    }
+
+    Write-TabColorSequence $picked.Hex
+
+    if ($picked.Hex) {
+        $env:OMP_TABCOLOR = $picked.Hex
+        Write-Host ("탭 색상: {0} {1} ({2})" -f $picked.Id, $picked.Name, $picked.Hex) -ForegroundColor Green
+    }
+    else {
+        Remove-Item 'Env:OMP_TABCOLOR' -ErrorAction SilentlyContinue
+        Write-Host "탭 색상을 원래대로 되돌렸습니다." -ForegroundColor Green
+    }
+
+    return $true
+}
+
+function set-tabtitle
+{
+    # 현재 탭 제목을 바꾼다. 인자 없으면 후보 목록(직접 입력/SV/SV+경로/현재 폴더/기본)에서 선택, '' = 프로필 이름. (축약: tt, 색까지 한 번에: tb)
+    # 적용하면 $true, 취소·실패면 $false를 돌려준다 (tb가 다음 단계로 갈지 판단).
+    param(
+        [Parameter(Position = 0)]
+        [string]$Title
+    )
+
+    if (-not $env:WT_SESSION) {
+        Write-Host "Windows Terminal 안에서 실행할 때만 탭 제목을 바꿀 수 있습니다." -ForegroundColor Yellow
+        return $false
+    }
+
+    $current = [string]$env:OMP_TITLE
+
+    # 빈 문자열을 명시하면 기본(프로필 이름)으로, 아예 생략하면 목록에서 고른다.
+    if (-not $PSBoundParameters.ContainsKey('Title')) {
+        # 라벨은 한글 폭(2칸)을 감안해 12칸에 맞춰 둔다.
+        $items = [System.Collections.Generic.List[object]]::new()
+        $items.Add([pscustomobject]@{ Label = '직접 입력   '; Title = $null })
+
+        if (-not [string]::IsNullOrWhiteSpace($global:SV)) {
+            $items.Add([pscustomobject]@{ Label = 'SV 별칭     '; Title = [string]$global:SV })
+
+            if (-not [string]::IsNullOrWhiteSpace($global:SVDIR)) {
+                $items.Add([pscustomobject]@{ Label = 'SV + 경로   '; Title = ("{0}:{1}" -f $global:SV, $global:SVDIR) })
+            }
+        }
+
+        $folder = Split-Path -Leaf $PWD.ProviderPath
+        if ($folder) {
+            $items.Add([pscustomobject]@{ Label = '현재 폴더   '; Title = $folder })
+        }
+
+        $items.Add([pscustomobject]@{ Label = '기본        '; Title = '' })
+
+        $esc = [char]27
+        $rows = foreach ($item in $items) {
+            $text = if ($null -eq $item.Title) { "$esc[90m새 제목을 입력한다$esc[0m" }
+                elseif ($item.Title -eq '') { "$esc[90m프로필 이름으로 되돌린다$esc[0m" }
+                else { $item.Title }
+            $mark = if ($null -ne $item.Title -and $item.Title -eq $current) { "  $esc[92m(현재)$esc[0m" } else { '' }
+            "{0}{1}{2}" -f $item.Label, $text, $mark
+        }
+
+        # 제목을 정한 적이 있으면 그 줄에서, 없으면 직접 입력 줄에서 시작한다.
+        $start = if ($current) { [Math]::Max(0, $items.FindIndex([Predicate[object]] { param($item) $item.Title -eq $current })) } else { 0 }
+
+        # 직접 입력 줄에서는 입력 전이라 현재 제목을 그대로 보여준다.
+        $index = Select-TabPickerItem -Header '탭 제목 선택' -Rows $rows -StartIndex $start `
+            -OnMove { param($i) Write-TabTitleSequence $(if ($null -eq $items[$i].Title) { $current } else { $items[$i].Title }) } `
+            -OnCancel { Write-TabTitleSequence $current }
+
+        if ($index -lt 0) {
+            Write-Host "탭 제목 변경을 취소했습니다." -ForegroundColor DarkCyan
+            return $false
+        }
+
+        # $Title은 [string]이라 $null을 넣으면 ''(기본)로 바뀌므로, 직접 입력 판별은 형 없는 변수로 한다.
+        $choice = $items[$index].Title
+
+        if ($null -eq $choice) {
+            $choice = Read-Host "탭 제목 (빈 값이면 취소)"
+            if ([string]::IsNullOrWhiteSpace($choice)) {
+                Write-TabTitleSequence $current
+                Write-Host "탭 제목 변경을 취소했습니다." -ForegroundColor DarkCyan
+                return $false
+            }
+        }
+
+        $Title = $choice
+    }
+
+    Write-TabTitleSequence $Title
+
+    if ($Title) {
+        $env:OMP_TITLE = $Title
+        Write-Host ("탭 제목: {0}" -f $Title) -ForegroundColor Green
+    }
+    else {
+        Remove-Item 'Env:OMP_TITLE' -ErrorAction SilentlyContinue
+        Write-Host "탭 제목을 프로필 이름으로 되돌렸습니다." -ForegroundColor Green
+    }
+
+    return $true
+}
+
+function tc {
+    # alias-fn: 현재 탭 색상을 바꾼다. (= set-tabcolor, 인자 없으면 색 견본 목록, default: 원래대로)
+    param(
+        [Parameter(Position = 0)]
+        [string]$Color
+    )
+
+    $null = set-tabcolor -Color $Color
+}
+
+function tt {
+    # alias-fn: 현재 탭 제목을 바꾼다. (= set-tabtitle, 인자 없으면 후보 목록, 인자는 공백 포함 그대로 제목)
+    # 따옴표 없이 여러 단어를 쓰도록 param 대신 $args를 이어 붙인다.
+    if ($args.Count -gt 0) {
+        $null = set-tabtitle -Title ((@($args) | ForEach-Object { [string]$_ }) -join ' ')
+    }
+    else {
+        $null = set-tabtitle
+    }
+}
+
+function tb {
+    # alias-fn: 탭 제목과 색상을 한 번에 바꾼다. (= tt <제목> + tc <색>, 생략한 쪽은 목록에서 선택)
+    param(
+        [Parameter(Position = 0)]
+        [string]$Title,
+
+        [Parameter(Position = 1)]
+        [string]$Color
+    )
+
+    # 생략한 쪽은 tt/tc처럼 목록에서 고른다. 제목 선택이 취소·실패하면($true가 아니면) 색은 건드리지 않는다.
+    $titleArgs = @{}
+    if ($PSBoundParameters.ContainsKey('Title')) { $titleArgs.Title = $Title }
+
+    if (-not (@(set-tabtitle @titleArgs) -contains $true)) { return }
+    $null = set-tabcolor -Color $Color
+}
+
+Register-ArgumentCompleter -CommandName tc, tb, set-tabcolor -ParameterName Color -ScriptBlock {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+    Get-TabColorPalette | Where-Object { $_.Id -like "$wordToComplete*" } | ForEach-Object {
+        $hexText = if ($_.Hex) { $_.Hex } else { '색 없음' }
+        [System.Management.Automation.CompletionResult]::new($_.Id, $_.Id, 'ParameterValue', ("{0} {1}" -f $_.Name, $hexText))
+    }
+}
+
+# 제목 후보(SV 별칭, SV+경로, 현재 폴더)를 Tab으로 채운다.
+Register-ArgumentCompleter -CommandName tb, set-tabtitle -ParameterName Title -ScriptBlock {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+    $word = $wordToComplete.Trim("'`"")
+    $candidates = @(
+        if (-not [string]::IsNullOrWhiteSpace($global:SV)) {
+            [string]$global:SV
+            if (-not [string]::IsNullOrWhiteSpace($global:SVDIR)) { "{0}:{1}" -f $global:SV, $global:SVDIR }
+        }
+        Split-Path -Leaf $PWD.ProviderPath
+    ) | Where-Object { $_ -and $_ -like "$word*" } | Select-Object -Unique
+
+    foreach ($candidate in $candidates) {
+        $text = if ($candidate -match '[\s''"$;,(){}#]') { "'{0}'" -f ($candidate -replace "'", "''") } else { $candidate }
+        [System.Management.Automation.CompletionResult]::new($text, $candidate, 'ParameterValue', $candidate)
+    }
+}
+
+#########################################################
+# 터미널 탭 제목 / 색상 (tt/tc/tb) 영역 End
 #########################################################
