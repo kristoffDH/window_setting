@@ -2583,18 +2583,51 @@ Register-ArgumentCompleter -Native -CommandName rl -ScriptBlock {
 # 위 SSH/SCP 영역의 원격 명령(ss/sd/sb/xs/xd/c/auth/sw/xw/rl/up/dn/rr)을 사용 흐름 순서로 정리한 가이드.
 # 원격 명령을 고치면 이 설명도 함께 갱신할 것. (구 ssh-help.ps1에서 프로필로 병합)
 
+function Add-HelpHighlight {
+    # fnc-ignore
+    # 검색어와 일치하는 부분만 반전 표시로 감싼다. 색상 코드(ESC[..m) 안은 건드리지 않는다. (Show-HelpPager 전용)
+    param([string]$Text, [string]$Term)
+
+    if ([string]::IsNullOrEmpty($Term)) { return $Text }
+
+    $esc = [char]27
+    $pattern = "$esc\[[0-9;]*[A-Za-z]"
+
+    # 색상 코드를 구분자로 쪼갠 뒤(캡처해서 그대로 유지) 본문 조각에서만 검색어를 강조한다.
+    $parts = [regex]::Split($Text, "($pattern)")
+
+    $result = foreach ($part in $parts) {
+        if ($part -match "^$pattern$") {
+            $part
+        }
+        else {
+            [regex]::Replace($part, [regex]::Escape($Term), { param($m) "$esc[7m$($m.Value)$esc[27m" }, 'IgnoreCase')
+        }
+    }
+
+    -join $result
+}
+
 function Show-HelpPager {
     # fnc-ignore
-    # 대체 스크린 버퍼에 내용을 띄우고 스크롤한다 (vi-help와 동일한 방식).
+    # 대체 스크린 버퍼에 내용을 띄우고 스크롤 / 검색한다 (/ 검색, n·N 다음·이전 일치).
     param(
         [System.Collections.Generic.List[string]]$Lines,
-        [string]$StatusHint = '↑/↓ PgUp/PgDn 스크롤 | ESC/q/Ctrl+C 닫기'
+        [string]$StatusHint = '↑↓ 스크롤 | / 검색 · n/N 이동 | ESC/q 닫기'
     )
 
     $esc = [char]27
     $prevCtrlC = [Console]::TreatControlCAsInput
     [Console]::TreatControlCAsInput = $true
     [Console]::Write("$esc[?1049h$esc[?25l")
+
+    # 검색은 색상 코드를 걷어낸 본문으로 한다 (색 때문에 글자가 끊겨 보이지 않도록).
+    $plain = @($Lines | ForEach-Object { $_ -replace "$esc\[[0-9;]*[A-Za-z]", '' })
+
+    $term = ''      # 현재 검색어
+    $hits = @()     # 검색어가 있는 줄 번호
+    $hitIndex = -1  # 지금 보고 있는 일치 순번
+    $notice = ''    # 상태줄에 한 번만 띄울 안내
 
     try {
         $top = 0
@@ -2608,19 +2641,75 @@ function Show-HelpPager {
             for ($i = 0; $i -lt $height; $i++) {
                 $idx = $top + $i
                 if ($idx -lt $Lines.Count) {
-                    [void]$sb.Append($Lines[$idx])
+                    [void]$sb.Append((Add-HelpHighlight -Text $Lines[$idx] -Term $term))
                 }
                 [void]$sb.Append("$esc[K`n")
             }
 
             $shownTo = [Math]::Min($top + $height, $Lines.Count)
-            [void]$sb.Append(("$esc[7m {0}  ({1}-{2}/{3}줄) $esc[0m$esc[K" -f $StatusHint, ($top + 1), $shownTo, $Lines.Count))
+            $status = if ($notice) { $notice }
+                elseif ($term) { "{0}  [검색: {1} - {2}/{3}]" -f $StatusHint, $term, ($hitIndex + 1), $hits.Count }
+                else { $StatusHint }
+
+            # 상태줄이 화면보다 길면 줄이 밀리므로 폭에 맞춰 자른다.
+            $statusText = " {0}  ({1}-{2}/{3}줄) " -f $status, ($top + 1), $shownTo, $Lines.Count
+            $limit = [Math]::Max(10, [Console]::WindowWidth - 1)
+            if ($statusText.Length -gt $limit) { $statusText = $statusText.Substring(0, $limit) }
+
+            [void]$sb.Append(("$esc[7m{0}$esc[0m$esc[K" -f $statusText))
             [Console]::Write($sb.ToString())
 
             $key = [Console]::ReadKey($true)
+            $notice = ''
 
             if ($key.Key -eq [ConsoleKey]::C -and ($key.Modifiers -band [ConsoleModifiers]::Control)) {
                 return
+            }
+
+            # 검색어 입력은 Read-Host로 받는다 (한글 IME 입력이 그대로 들어온다).
+            if ($key.KeyChar -eq '/') {
+                [Console]::Write(("$esc[{0};1H$esc[K$esc[?25h" -f ($height + 1)))
+                [Console]::TreatControlCAsInput = $false
+                $typed = Read-Host '검색'
+                [Console]::TreatControlCAsInput = $true
+                [Console]::Write("$esc[?25l")
+
+                $term = ([string]$typed).Trim()
+                $hits = @()
+                $hitIndex = -1
+
+                if ($term) {
+                    $hits = @(for ($i = 0; $i -lt $plain.Count; $i++) {
+                        if ($plain[$i].IndexOf($term, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $i }
+                    })
+
+                    if ($hits.Count -eq 0) {
+                        $notice = "일치하는 내용이 없습니다: $term"
+                        $term = ''
+                    }
+                    else {
+                        # 지금 보이는 위치 이후의 첫 일치부터 보여준다.
+                        $hitIndex = [array]::FindIndex([int[]]$hits, [Predicate[int]] { param($h) $h -ge $top })
+                        if ($hitIndex -lt 0) { $hitIndex = 0 }
+                        $top = [Math]::Max(0, [Math]::Min($hits[$hitIndex] - 2, $maxTop))
+                    }
+                }
+
+                continue
+            }
+
+            # n = 다음 일치, N = 이전 일치 (목록 끝에서 처음으로 돌아간다)
+            if ($key.KeyChar -eq 'n' -or $key.KeyChar -eq 'N') {
+                if ($hits.Count -eq 0) {
+                    $notice = '검색어가 없습니다 (/ 로 검색)'
+                }
+                else {
+                    $step = if ($key.KeyChar -ceq 'N') { -1 } else { 1 }
+                    $hitIndex = ((($hitIndex + $step) % $hits.Count) + $hits.Count) % $hits.Count
+                    $top = [Math]::Max(0, [Math]::Min($hits[$hitIndex] - 2, $maxTop))
+                }
+
+                continue
             }
 
             switch ($key.Key) {
@@ -2646,7 +2735,7 @@ function Show-HelpPager {
 }
 
 function ssh-help {
-    # 원격 서버 선택/접속/파일 전송 명령 가이드를 새 화면에 표시한다. (↑↓/PgUp/PgDn 스크롤, ESC/q/Ctrl+C 닫기)
+    # 원격 서버 선택/접속/파일 전송 명령 가이드를 새 화면에 표시한다. (↑↓/PgUp/PgDn 스크롤, / 검색·n/N 이동, ESC/q/Ctrl+C 닫기)
     $esc = [char]27
     $cmdWidth = 22
 
