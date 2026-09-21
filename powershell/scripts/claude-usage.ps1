@@ -120,13 +120,86 @@ function cu-pull {
     Write-Host ''
 }
 
+$global:cu_port      = 8765
+$global:cu_allowfile = Join-Path $global:cu_local 'serve.conf'   # 접속 허용 대역(CIDR)을 한 줄 적어 둔 파일
+
+function cu-serve-pid {
+    # fnc-ignore
+    (Get-NetTCPConnection -LocalPort $global:cu_port -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -First 1).OwningProcess
+}
+
+function cu-serve-ip {
+    # fnc-ignore
+    (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
+        Select-Object -First 1).IPAddress
+}
+
+function cu-serve {
+    # 뷰어 웹 서버 기동 - 팀원이 브라우저로 접속 (이미 떠 있으면 상태만 표시)
+    $running = cu-serve-pid
+    if ($running) {
+        Write-Host (' 이미 실행 중 · PID {0} · http://{1}:{2}/' -f $running, (cu-serve-ip), $global:cu_port) -ForegroundColor DarkGray
+        return
+    }
+    if (-not (Test-Path $global:cu_allowfile)) {
+        Write-Warning ('허용 대역 파일이 없습니다: {0}  (예: 10.0.0.0/24 를 한 줄 적어 두세요)' -f $global:cu_allowfile)
+        return
+    }
+    $allow = (Get-Content $global:cu_allowfile | Where-Object { $_.Trim() -and $_ -notmatch '^\s*#' } | Select-Object -First 1).Trim()
+    $pyw = python -c "import os, sys; print(os.path.join(os.path.dirname(sys.executable), 'pythonw.exe'))"
+    if (-not (Test-Path $pyw)) { Write-Warning "pythonw.exe 를 찾지 못했습니다: $pyw"; return }
+
+    # WMI 로 띄워야 호출한 셸이 닫혀도 서버가 살아남는다 (자식 프로세스로 띄우면 같이 정리됨)
+    $cmd = '"{0}" serve.py --allow {1} --port {2} --bind 0.0.0.0' -f $pyw, $allow, $global:cu_port
+    $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmd; CurrentDirectory = $global:cu_local }
+    if ($r.ReturnValue -ne 0) { Write-Warning "서버 기동 실패 (코드 $($r.ReturnValue))"; return }
+
+    foreach ($i in 1..10) { Start-Sleep -Milliseconds 400; if (cu-serve-pid) { break } }
+    $now = cu-serve-pid
+    if ($now) {
+        Write-Host ''
+        Write-Host (' 서버 기동 · PID {0}' -f $now) -ForegroundColor Cyan
+        Write-Host (' 팀원 접속 : http://{0}:{1}/' -f (cu-serve-ip), $global:cu_port)
+        Write-Host (' 내 PC     : http://localhost:{0}/' -f $global:cu_port) -ForegroundColor DarkGray
+        Write-Host (' 허용 대역 : {0} (+ 루프백)' -f $allow) -ForegroundColor DarkGray
+        Write-Host ''
+    }
+    else {
+        Write-Warning ('기동했지만 포트 {0} 대기가 확인되지 않습니다. serve.log 를 확인하세요.' -f $global:cu_port)
+    }
+}
+
+function cu-serve-stop {
+    # 뷰어 웹 서버 중지
+    $running = cu-serve-pid
+    if (-not $running) { Write-Host ' 실행 중인 서버가 없습니다.' -ForegroundColor DarkGray; return }
+    Stop-Process -Id $running -Force
+    Start-Sleep -Milliseconds 500
+    if (cu-serve-pid) { Write-Warning "중지 실패 - PID $running 확인 필요" }
+    else { Write-Host (' 서버 중지 · PID {0}' -f $running) -ForegroundColor Cyan }
+}
+
+function cu-serve-status {
+    # 뷰어 웹 서버 상태 확인 (PID·접속 주소·최근 로그)
+    $running = cu-serve-pid
+    if ($running) { Write-Host (' 실행 중 · PID {0} · http://{1}:{2}/' -f $running, (cu-serve-ip), $global:cu_port) -ForegroundColor Cyan }
+    else { Write-Host ' 중지됨 (cu-serve 로 기동)' -ForegroundColor DarkGray }
+    $log = Join-Path $global:cu_local 'serve.log'
+    if (Test-Path $log) { Get-Content $log -Tail 3 -Encoding utf8 | ForEach-Object { Write-Host "   $_" -ForegroundColor DarkGray } }
+}
+
 function cu-help {
     # Claude 사용량 수집기 명령 목록을 출력한다.
     $cmds = @(
         @{ Name = 'cu-status'; Desc = '수집기 점검 - cron 등록/누적 건수/마지막 수집/로그인 상태' },
         @{ Name = 'cu-report'; Desc = '누적 요약 - 주차별 최고치와 요일·시간대 평균' },
         @{ Name = 'cu-run   '; Desc = '지금 한 번 더 수집 (예정 시각 외, 남용하지 말 것)' },
-        @{ Name = 'cu-pull  '; Desc = 'usage.csv 를 이 PC로 내려받고 신규 기록 요약' }
+        @{ Name = 'cu-pull  '; Desc = 'usage.csv 를 이 PC로 내려받고 신규 기록 요약' },
+        @{ Name = 'cu-serve '; Desc = '뷰어 웹 서버 기동 (팀원 접속용, 허용 대역만)' },
+        @{ Name = 'cu-serve-stop'; Desc = '뷰어 웹 서버 중지' },
+        @{ Name = 'cu-serve-status'; Desc = '뷰어 웹 서버 상태와 최근 로그' }
     )
 
     Write-Host ''

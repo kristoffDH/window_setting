@@ -1606,7 +1606,7 @@ function xd {
 }
 
 function ping-test {
-    # 선택된 $SVIP로 ping을 계속 보낸다. (축약: p)
+    # 선택된 $SVIP로 ping.exe -t를 계속 보낸다 (출력이 계속 쌓인다). 상태만 보려면 p(ping-watch).
     $svipVar = Get-Variable SVIP -Scope Global -ErrorAction SilentlyContinue
 
     if (-not $svipVar -or [string]::IsNullOrWhiteSpace($global:SVIP)) {
@@ -1623,9 +1623,148 @@ function ping-test {
     & ping.exe -t $parsedIp.IPAddressToString
 }
 
+function Test-PingOnce {
+    # fnc-ignore
+    # ping 1회. 응답이면 Ok=$true와 왕복시간(ms)을 돌려준다. (ping-watch 전용 - 시험 때 이 함수만 바꿔 끼운다)
+    param(
+        [string]$Target,
+        [int]$TimeoutMs = 1000
+    )
+
+    try {
+        $ping = [System.Net.NetworkInformation.Ping]::new()
+        try {
+            $reply = $ping.Send($Target, $TimeoutMs)
+        }
+        finally {
+            $ping.Dispose()
+        }
+    }
+    catch {
+        # 이름을 못 찾거나 네트워크가 없는 경우도 '응답 없음'으로 본다.
+        return @{ Ok = $false; Ms = 0 }
+    }
+
+    if ($reply.Status -eq 'Success') {
+        return @{ Ok = $true; Ms = [int]$reply.RoundtripTime }
+    }
+
+    return @{ Ok = $false; Ms = 0 }
+}
+
+function Format-PingDuration {
+    # fnc-ignore
+    # 초를 "1시간 03분 / 2분 05초 / 12초" 형태로 짧게 표시한다. (ping-watch 표시용)
+    param([double]$Seconds)
+
+    $total = [int][Math]::Round($Seconds)
+
+    if ($total -ge 3600) { return ("{0}시간 {1:d2}분" -f [int]($total / 3600), [int](($total % 3600) / 60)) }
+    if ($total -ge 60) { return ("{0}분 {1:d2}초" -f [int]($total / 60), ($total % 60)) }
+    return ("{0}초" -f $total)
+}
+
+function ping-watch {
+    # 대상(기본 $SVIP)의 ping 상태를 한 줄에서 갱신하며 지켜본다. 상태가 바뀔 때만 줄을 남겨 재부팅 확인에 쓴다. (축약: p, 종료 Ctrl+C)
+    param(
+        [Parameter(Position = 0)]
+        [string]$Target,
+
+        [Alias('i')][int]$Interval = 1,
+        [Alias('t')][int]$Timeout = 1000,
+        [Alias('c')][int]$Count = 0
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Target)) {
+        if ([string]::IsNullOrWhiteSpace($global:SVIP)) {
+            Write-Host "사용법: p [대상(IP/호스트명)] [-i 간격초] [-c 횟수]   (대상을 생략하면 선택된 SVIP - 먼저 ss로 서버 선택)" -ForegroundColor Yellow
+            return
+        }
+
+        $Target = [string]$global:SVIP
+    }
+
+    $label = if ($global:SV -and $Target -eq [string]$global:SVIP) { "{0} ({1})" -f $global:SV, $Target } else { $Target }
+
+    $esc = [char]27
+    $green = "$esc[38;2;144;190;109m"
+    $red = "$esc[38;2;255;39;64m"
+    $gray = "$esc[38;2;141;153;174m"
+    $reset = "$esc[0m"
+
+    Write-Host ("[{0:HH:mm:ss}] 감시 시작  {1}  ·  {2}초 간격  ·  Ctrl+C 종료" -f (Get-Date), $label, $Interval) -ForegroundColor Cyan
+
+    $state = $null            # $true=응답, $false=무응답 (첫 결과로 정해진다)
+    $now = Get-Date
+    $since = $now             # 현재 상태가 시작된 시각
+    $startedAt = $now
+    $streak = 0               # 현재 상태가 이어진 횟수
+    $changes = 0
+    $downTotal = 0.0
+    $checks = 0
+
+    # 갱신 줄은 [Console]::Write로 직접 쓰는데, 콘솔 기본 인코딩(CP949)에서는 ✖ 같은 문자가 ?로 깨진다.
+    # 그래서 감시하는 동안만 UTF-8로 바꿔 쓰고 끝나면 되돌린다.
+    $prevEncoding = [Console]::OutputEncoding
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+    try {
+        while ($true) {
+            $result = Test-PingOnce -Target $Target -TimeoutMs $Timeout
+            $ok = [bool]$result.Ok
+            $checks++
+
+            if ($null -eq $state -or $ok -ne $state) {
+                $now = Get-Date
+                $held = ($now - $since).TotalSeconds
+
+                # 갱신 중인 줄을 지우고, 그 자리에 변화 기록만 남긴다 (이 줄만 화면에 쌓인다).
+                [Console]::Write("`r$esc[K")
+
+                if ($null -eq $state) {
+                    $first = if ($ok) { "● 응답 {0}ms" -f $result.Ms } else { "✖ 응답 없음" }
+                    Write-Host ("[{0:HH:mm:ss}] {1}" -f $now, $first) -ForegroundColor $(if ($ok) { 'Green' } else { 'Red' })
+                }
+                elseif ($ok) {
+                    $downTotal += $held
+                    $changes++
+                    Write-Host ("[{0:HH:mm:ss}] ● 응답 재개 {1}ms  (응답 없음 {2} 지속)" -f $now, $result.Ms, (Format-PingDuration $held)) -ForegroundColor Green
+                }
+                else {
+                    $changes++
+                    Write-Host ("[{0:HH:mm:ss}] ✖ 응답 끊김  (응답 {1} 지속)" -f $now, (Format-PingDuration $held)) -ForegroundColor Red
+                }
+
+                $state = $ok
+                $since = $now
+                $streak = 0
+            }
+
+            $streak++
+            $held = ((Get-Date) - $since).TotalSeconds
+            $head = if ($ok) { "{0}● 응답 {1,4}ms{2}" -f $green, $result.Ms, $reset } else { "{0}✖ 응답 없음{1}" -f $red, $reset }
+            [Console]::Write(("`r$esc[K {0}  {1}· {2}회 연속 · {3} 유지 · 확인 {4}회{5}" -f $head, $gray, $streak, (Format-PingDuration $held), $checks, $reset))
+
+            if ($Count -gt 0 -and $checks -ge $Count) { break }
+            Start-Sleep -Seconds $Interval
+        }
+    }
+    finally {
+        # Ctrl+C로 끊겨도 갱신 줄을 지우고 요약을 남긴다.
+        [Console]::Write("`r$esc[K")
+
+        if ($false -eq $state) { $downTotal += ((Get-Date) - $since).TotalSeconds }
+
+        Write-Host ("[{0:HH:mm:ss}] 감시 종료  ·  총 {1}  ·  확인 {2}회  ·  상태 변경 {3}회  ·  응답 없음 합계 {4}" -f
+            (Get-Date), (Format-PingDuration ((Get-Date) - $startedAt).TotalSeconds), $checks, $changes, (Format-PingDuration $downTotal)) -ForegroundColor Cyan
+
+        [Console]::OutputEncoding = $prevEncoding
+    }
+}
+
 function p {
-    # alias-fn: 선택된 $SVIP로 ping을 계속 보낸다. (= ping-test)
-    ping-test @args
+    # alias-fn: 대상(기본 SVIP)의 ping 상태를 한 줄로 지켜본다. (= ping-watch, 상태가 바뀔 때만 기록)
+    ping-watch @args
 }
 
 function Clear-ChangedHostKey {
@@ -2602,7 +2741,10 @@ function ssh-help {
     Add-Note "인자 없이 auth = 선택된 SV 대상. 사용법은 auth -h"
     Add-Note "예: auth user@10.0.0.5 2222  /  auth myhost (config 별칭은 포트 자동)"
     Add-Note "IP 재사용 등으로 호스트 키가 바뀐 서버는 known_hosts 항목을 자동 정리한 뒤 등록한다"
-    Add-Cmd "p"                "선택된 SVIP로 ping (= ping-test)"
+    Add-Cmd "p [대상]"         "ping 상태 감시 (= ping-watch, 대상을 생략하면 SVIP)"
+    Add-Note "한 줄에서 갱신되고 상태가 바뀔 때만 기록이 남는다 (재부팅 확인용)"
+    Add-Note "대상에 IP나 호스트명을 직접 줄 수 있다. -i 간격(초) -c 횟수, 종료는 Ctrl+C"
+    Add-Cmd "ping-test"        "선택된 SVIP로 계속 ping (출력이 쌓이는 예전 방식)"
     Add-Cmd "d [-r|-l|-u|-d|-g]" "현재 세션을 화면 분할로 복제 (= dup, 기본 -r 우측)"
     Add-Note "-g: 2x2 4분할 (세로 분할 후 양쪽을 가로 분할, 포커스는 원래 pane)"
     Add-Note "새 pane이 SV/DST/SVDIR 선택 상태를 그대로 이어받는다"
