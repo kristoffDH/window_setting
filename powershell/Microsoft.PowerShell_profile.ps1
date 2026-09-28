@@ -1832,6 +1832,392 @@ function p {
     ping-watch @args
 }
 
+function Test-TcpPort {
+    # fnc-ignore
+    # TCP 포트 하나에 접속을 시도해 열림 / 닫힘(거부) / 무응답(타임아웃)을 구분한다. (pt/rb 전용 - 시험 때 이 함수만 바꿔 끼운다)
+    param(
+        [string]$Target,
+        [int]$Port,
+        [int]$TimeoutMs = 1000
+    )
+
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    $client = [System.Net.Sockets.TcpClient]::new()
+
+    try {
+        # 동기 Connect는 타임아웃을 정할 수 없어 ConnectAsync + Wait로 기다린다.
+        if (-not $client.ConnectAsync($Target, $Port).Wait($TimeoutMs)) {
+            return @{ State = 'timeout'; Ms = $TimeoutMs }
+        }
+
+        return @{ State = 'open'; Ms = [int]$watch.ElapsedMilliseconds }
+    }
+    catch {
+        # 접속 거부(RST)와 이름 조회 실패가 모두 여기로 온다. Wait는 실패한 작업의 예외를 다시 던진다.
+        return @{ State = 'closed'; Ms = [int]$watch.ElapsedMilliseconds }
+    }
+    finally {
+        $watch.Stop()
+        $client.Dispose()
+    }
+}
+
+function Invoke-SvSsh {
+    # fnc-ignore
+    # 선택된 $SV에 명령 한 줄을 보내고 출력과 종료 코드를 돌려준다. (rs/rb 공용 - 시험 때 이 함수만 바꿔 끼운다)
+    # config의 Host * RemoteCommand와 충돌하지 않게 무효화하고, 한글이 깨지지 않게 실행 중에만 UTF-8로 받는다.
+    param(
+        [string]$Command,
+        [int]$ConnectTimeout = 5,
+        [switch]$IncludeError
+    )
+
+    $prevEncoding = [Console]::OutputEncoding
+
+    try {
+        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+        $sshArgs = @(
+            '-o', 'BatchMode=yes',
+            '-o', ("ConnectTimeout={0}" -f $ConnectTimeout),
+            '-o', 'RemoteCommand=none',
+            '-o', 'RequestTTY=no',
+            '-p', $global:SVPORT,
+            $global:SV,
+            $Command
+        )
+
+        $lines = if ($IncludeError) { @(& ssh @sshArgs 2>&1) } else { @(& ssh @sshArgs 2>$null) }
+
+        return @{ Lines = $lines; ExitCode = $LASTEXITCODE }
+    }
+    finally {
+        [Console]::OutputEncoding = $prevEncoding
+    }
+}
+
+function pt {
+    # 대상의 TCP 포트가 열렸는지 확인한다. 열림/닫힘/무응답을 구분해 표로 보여준다. (대상 생략 시 $SVIP, 포트 생략 시 SVPORT+22/80/443)
+    param(
+        [Parameter(Position = 0)]
+        [string]$Target,
+
+        [Parameter(Position = 1)]
+        [string]$Ports,
+
+        [Alias('t')][int]$Timeout = 1000
+    )
+
+    # 'pt 8080'처럼 대상을 생략하고 포트만 준 경우를 알아본다 (숫자·쉼표·범위만 있으면 포트로 본다).
+    if ($Target -and -not $Ports -and $Target -match '^[0-9]+(\s*[-,]\s*[0-9]+)*$') {
+        $Ports = $Target
+        $Target = ''
+    }
+
+    if ([string]::IsNullOrWhiteSpace($Target)) {
+        if ([string]::IsNullOrWhiteSpace($global:SVIP)) {
+            Write-Host "사용법: pt [대상(IP/호스트명)] [포트목록] [-t 타임아웃ms]   (대상을 생략하면 선택된 SVIP - 먼저 ss로 서버 선택)" -ForegroundColor Yellow
+            Write-Host "  예: pt 8080   /   pt 10.0.0.5 22,80,443   /   pt myhost 8000-8010 -t 500" -ForegroundColor DarkCyan
+            return
+        }
+
+        $Target = [string]$global:SVIP
+    }
+
+    # 포트를 생략하면 ssh 포트와 흔한 서비스 포트를 함께 본다 (ping은 되는데 서비스가 안 뜬 상황 구분용).
+    if ([string]::IsNullOrWhiteSpace($Ports)) {
+        $Ports = (@($global:SVPORT, 22, 80, 443) | Where-Object { $_ }) -join ','
+    }
+
+    $requested = [System.Collections.Generic.List[int]]::new()
+    $seen = @{}
+
+    foreach ($chunk in ($Ports -split ',')) {
+        $text = $chunk.Trim()
+        if (-not $text) { continue }
+
+        $range = $text -split '-', 2
+        $first = 0
+        $last = 0
+
+        if (-not [int]::TryParse($range[0].Trim(), [ref]$first) -or
+            ($range.Count -eq 2 -and -not [int]::TryParse($range[1].Trim(), [ref]$last))) {
+            Write-Error ("포트 형식을 알 수 없습니다: {0}" -f $text)
+            return
+        }
+
+        if ($range.Count -eq 1) { $last = $first }
+
+        if ($first -lt 1 -or $last -gt 65535 -or $last -lt $first) {
+            Write-Error ("포트 범위가 올바르지 않습니다: {0} (1-65535)" -f $text)
+            return
+        }
+
+        for ($port = $first; $port -le $last; $port++) {
+            if ($seen.ContainsKey($port)) { continue }
+            $seen[$port] = $true
+            $requested.Add($port)
+        }
+    }
+
+    if ($requested.Count -eq 0) {
+        Write-Error "확인할 포트가 없습니다."
+        return
+    }
+
+    # 포트 스캐너가 아니라 서비스 확인용이므로 한 번에 보는 개수를 제한한다 (기본 타임아웃에서 최악 64초).
+    if ($requested.Count -gt 64) {
+        Write-Error ("한 번에 확인할 수 있는 포트는 64개까지입니다. (요청 {0}개)" -f $requested.Count)
+        return
+    }
+
+    # 이름을 못 찾은 경우를 '포트 닫힘'과 섞지 않도록 주소는 미리 한 번만 조회한다.
+    $address = $null
+
+    if (-not [System.Net.IPAddress]::TryParse($Target, [ref]$address)) {
+        try {
+            $address = @([System.Net.Dns]::GetHostAddresses($Target))[0]
+        }
+        catch {
+            Write-Error ("주소를 찾지 못했습니다: {0}" -f $Target)
+            return
+        }
+    }
+
+    $ip = $address.IPAddressToString
+
+    $shown = if ($global:SV -and $Target -eq [string]$global:SVIP) { "{0} ({1})" -f $global:SV, $ip }
+        elseif ($Target -ne $ip) { "{0} ({1})" -f $Target, $ip }
+        else { $ip }
+
+    # 어느 대상인지가 한눈에 들어오도록 rl과 같은 굵은 코랄 머리글을 쓴다.
+    $esc = [char]27
+    $head = "$esc[1;38;2;231;111;81m"
+    $sub = "$esc[38;5;245m"
+
+    Write-Host ("{0}port:$esc[0m {1}{2}$esc[0m  {0}(포트 {3}개 · 타임아웃 {4}ms)$esc[0m" -f $sub, $head, $shown, $requested.Count, $Timeout)
+
+    $services = @{
+        21 = 'ftp'; 22 = 'ssh'; 23 = 'telnet'; 25 = 'smtp'; 53 = 'dns'; 80 = 'http'
+        111 = 'rpcbind'; 123 = 'ntp'; 139 = 'smb'; 389 = 'ldap'; 443 = 'https'; 445 = 'smb'
+        514 = 'syslog'; 873 = 'rsync'; 1521 = 'oracle'; 2049 = 'nfs'; 3000 = 'http-alt'
+        3306 = 'mysql'; 3389 = 'rdp'; 5432 = 'postgres'; 5900 = 'vnc'; 6379 = 'redis'
+        8000 = 'http-alt'; 8080 = 'http-alt'; 8443 = 'https-alt'; 9000 = 'http-alt'
+        9200 = 'elastic'; 27017 = 'mongo'
+    }
+
+    $openCount = 0
+
+    foreach ($port in $requested) {
+        $result = Test-TcpPort -Target $ip -Port $port -TimeoutMs $Timeout
+
+        switch ($result.State) {
+            'open' { $mark = '●'; $state = '열림  '; $color = 'Green'; $openCount++ }
+            'closed' { $mark = '✖'; $state = '닫힘  '; $color = 'Red' }
+            default { $mark = '○'; $state = '무응답'; $color = 'DarkYellow' }
+        }
+
+        $took = if ($result.State -eq 'timeout') { "{0}ms 초과" -f $Timeout } else { "{0}ms" -f $result.Ms }
+
+        $note = if ($services.ContainsKey($port)) { $services[$port] } else { '' }
+
+        if ("$port" -eq "$($global:SVPORT)" -and $Target -eq [string]$global:SVIP) {
+            $note = if ($note) { "{0} · SVPORT" -f $note } else { 'SVPORT' }
+        }
+
+        Write-Host ("  {0,5}/tcp  " -f $port) -NoNewline
+        Write-Host ("{0} {1}" -f $mark, $state) -NoNewline -ForegroundColor $color
+        Write-Host ("  {0,-11}" -f $took) -NoNewline -ForegroundColor DarkGray
+        Write-Host $note -ForegroundColor DarkCyan
+    }
+
+    Write-Host ("  {0}열림 {1}개 / 확인 {2}개$esc[0m" -f $sub, $openCount, $requested.Count)
+}
+
+function rb {
+    # 선택된 SV를 재부팅하고 다운 -> 복구까지 한 줄에서 지켜본다. (-y 확인 생략, -c 복구 후 접속, -w 단계별 최대 대기(분), 종료 Ctrl+C)
+    param(
+        [Alias('y')][switch]$Yes,
+        [Alias('c')][switch]$Connect,
+        [Alias('w')][double]$Wait = 10,
+        [Alias('i')][int]$Interval = 2
+    )
+
+    if (-not (Test-ScpReady)) { return }
+
+    $esc = [char]27
+    $head = "$esc[1;38;2;231;111;81m"
+    $sub = "$esc[38;5;245m"
+    $green = "$esc[38;2;144;190;109m"
+    $red = "$esc[38;2;255;39;64m"
+    $gray = "$esc[38;2;141;153;174m"
+    $reset = "$esc[0m"
+    $target = [string]$global:SVIP
+
+    Write-Host ("{0}reboot:$esc[0m {1}{2}$esc[0m  {0}({3}:{4} · {5})$esc[0m" -f $sub, $head, $global:SV, $target, $global:SVPORT, $global:SVID)
+
+    # 지금 응답하지 않는 서버에 재부팅 명령을 보낼 수는 없으므로 먼저 확인한다.
+    $alive = Test-PingOnce -Target $target -TimeoutMs 1000
+
+    if (-not $alive.Ok) {
+        Write-Host ("{0}가 지금 ping에 응답하지 않습니다. 이미 내려간 상태라면 p로 복구만 지켜보세요." -f $target) -ForegroundColor Yellow
+        return
+    }
+
+    # 계정이 root가 아니면 sudo가 필요하다. 비밀번호를 묻는 sudo는 여기서 처리하지 않는다(-n).
+    $who = Invoke-SvSsh -Command 'id -u'
+
+    if ($who.ExitCode -ne 0) {
+        Write-Error ("ssh 접속을 확인하지 못했습니다 (exit code: {0}). auth로 키 인증을 먼저 설정해 주세요." -f $who.ExitCode)
+        return
+    }
+
+    $isRoot = ([string](@($who.Lines)[0])).Trim() -eq '0'
+    $rebootCmd = if ($isRoot) { 'shutdown -r now || reboot' } else { 'sudo -n shutdown -r now || sudo -n reboot' }
+
+    if (-not $Yes) {
+        Write-Host ("  {0} ({1}) 를 지금 재부팅합니다." -f $global:SV, $target) -ForegroundColor Yellow
+        $answer = Read-Host "  계속할까요? (y/N)"
+
+        if ($answer -notmatch '^(y|yes)$') {
+            Write-Host "  취소했습니다." -ForegroundColor DarkGray
+            return
+        }
+    }
+
+    $startedAt = Get-Date
+    Write-Host ("[{0:HH:mm:ss}] 재부팅 명령 전송  ·  {1}" -f $startedAt, $rebootCmd) -ForegroundColor Cyan
+
+    $sent = Invoke-SvSsh -Command $rebootCmd -IncludeError
+    $sentText = (@($sent.Lines) | ForEach-Object { [string]$_ }) -join ' '
+
+    # 재부팅이 시작되면 연결이 끊겨 255가 돌아온다. 그래서 0과 255는 '전달됨'으로 본다.
+    if ($sent.ExitCode -ne 0 -and $sent.ExitCode -ne 255) {
+        if ($sentText -match 'password|sudo:') {
+            Write-Error ("sudo가 비밀번호를 요구합니다. NOPASSWD 설정이 없으면 c로 접속해 직접 재부팅해 주세요. {0}" -f $sentText)
+        }
+        else {
+            Write-Error ("재부팅 명령이 거절되었습니다 (exit code: {0}) {1}" -f $sent.ExitCode, $sentText)
+        }
+
+        return
+    }
+
+    # 갱신 줄은 [Console]::Write로 직접 쓰는데, 콘솔 기본 인코딩(CP949)에서는 ✖ 같은 문자가 ?로 깨진다.
+    # 그래서 지켜보는 동안만 UTF-8로 바꿔 쓰고 끝나면 되돌린다. (ping-watch와 같은 방식)
+    $prevEncoding = [Console]::OutputEncoding
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+    # 분 단위지만 0.5처럼 소수도 받는다 (짧게 확인하거나 시험할 때 쓴다).
+    $limit = [TimeSpan]::FromMinutes([Math]::Max(0.01, $Wait))
+    $downAt = $null
+    $upAt = $null
+    $readyAt = $null
+
+    try {
+        # 1단계: 다운 확인 - 순간적인 유실과 구분하려고 연속 2회 무응답일 때 다운으로 본다.
+        $missed = 0
+        $phaseStart = Get-Date
+
+        while ($true) {
+            $result = Test-PingOnce -Target $target -TimeoutMs 1000
+            $now = Get-Date
+
+            if ($result.Ok) { $missed = 0 }
+            else {
+                $missed++
+                if ($missed -ge 2) { $downAt = $now; break }
+            }
+
+            if (($now - $phaseStart) -gt $limit) { break }
+
+            $line = if ($result.Ok) { "{0}● 응답 {1,4}ms{2}" -f $green, $result.Ms, $reset } else { "{0}✖ 무응답 {1}회{2}" -f $red, $missed, $reset }
+            [Console]::Write(("`r$esc[K {0}  {1}· 다운 대기 · {2} 경과{3}" -f $line, $gray, (Format-PingDuration ($now - $phaseStart).TotalSeconds), $reset))
+            Start-Sleep -Seconds $Interval
+        }
+
+        [Console]::Write("`r$esc[K")
+
+        if (-not $downAt) {
+            Write-Host ("[{0:HH:mm:ss}] 다운을 확인하지 못했습니다 ({1} 동안 계속 응답). 재부팅이 시작되지 않았을 수 있습니다." -f (Get-Date), (Format-PingDuration $limit.TotalSeconds)) -ForegroundColor Yellow
+            return
+        }
+
+        Write-Host ("[{0:HH:mm:ss}] ✖ 다운 확인  (명령 후 {1})" -f $downAt, (Format-PingDuration ($downAt - $startedAt).TotalSeconds)) -ForegroundColor Red
+
+        # 2단계: 응답 재개 대기
+        $phaseStart = Get-Date
+
+        while ($true) {
+            $result = Test-PingOnce -Target $target -TimeoutMs 1000
+            $now = Get-Date
+
+            if ($result.Ok) { $upAt = $now; break }
+            if (($now - $phaseStart) -gt $limit) { break }
+
+            [Console]::Write(("`r$esc[K {0}✖ 응답 없음{1}  {2}· 복구 대기 · {3} 경과{4}" -f $red, $reset, $gray, (Format-PingDuration ($now - $downAt).TotalSeconds), $reset))
+            Start-Sleep -Seconds $Interval
+        }
+
+        [Console]::Write("`r$esc[K")
+
+        if (-not $upAt) {
+            Write-Host ("[{0:HH:mm:ss}] {1} 동안 응답이 돌아오지 않았습니다. p로 계속 지켜보세요." -f (Get-Date), (Format-PingDuration $limit.TotalSeconds)) -ForegroundColor Yellow
+            return
+        }
+
+        Write-Host ("[{0:HH:mm:ss}] ● 응답 재개 {1}ms  (다운 {2} 지속)" -f $upAt, $result.Ms, (Format-PingDuration ($upAt - $downAt).TotalSeconds)) -ForegroundColor Green
+
+        # 3단계: sshd 기동 - 포트가 열리고 실제로 로그인까지 되는지 확인한다.
+        $phaseStart = Get-Date
+        $portAt = $null
+
+        while ($true) {
+            $port = Test-TcpPort -Target $target -Port ([int]$global:SVPORT) -TimeoutMs 1000
+            $now = Get-Date
+
+            if ($port.State -eq 'open') { $portAt = $now; break }
+            if (($now - $phaseStart) -gt $limit) { break }
+
+            [Console]::Write(("`r$esc[K {0}○ {1} 포트 대기{2}  {3}· {4} 경과{5}" -f $gray, $global:SVPORT, $reset, $gray, (Format-PingDuration ($now - $upAt).TotalSeconds), $reset))
+            Start-Sleep -Seconds $Interval
+        }
+
+        [Console]::Write("`r$esc[K")
+
+        if (-not $portAt) {
+            Write-Host ("[{0:HH:mm:ss}] ping은 되지만 {1} 포트가 열리지 않았습니다. pt로 확인해 보세요." -f (Get-Date), $global:SVPORT) -ForegroundColor Yellow
+            return
+        }
+
+        Write-Host ("[{0:HH:mm:ss}] ● ssh {1} 포트 열림  (응답 재개 후 {2})" -f $portAt, $global:SVPORT, (Format-PingDuration ($portAt - $upAt).TotalSeconds)) -ForegroundColor Green
+
+        # sshd가 막 떠서 잠깐 거절하는 경우가 있어 로그인은 몇 번 다시 시도한다.
+        for ($try = 1; $try -le 3; $try++) {
+            $login = Invoke-SvSsh -Command 'true'
+            if ($login.ExitCode -eq 0) { $readyAt = Get-Date; break }
+            Start-Sleep -Seconds $Interval
+        }
+
+        if ($readyAt) {
+            Write-Host ("[{0:HH:mm:ss}] 복구 완료  ·  전체 {1}  ·  다운 {2}" -f $readyAt, (Format-PingDuration ($readyAt - $startedAt).TotalSeconds), (Format-PingDuration ($upAt - $downAt).TotalSeconds)) -ForegroundColor Cyan
+        }
+        else {
+            Write-Host ("[{0:HH:mm:ss}] 포트는 열렸지만 ssh 로그인이 아직 되지 않습니다. 잠시 후 c로 접속해 보세요." -f (Get-Date)) -ForegroundColor Yellow
+        }
+    }
+    finally {
+        # Ctrl+C로 끊겨도 갱신 줄을 지우고 인코딩을 되돌린다.
+        [Console]::Write("`r$esc[K")
+        [Console]::OutputEncoding = $prevEncoding
+    }
+
+    if (-not $readyAt) { return }
+
+    if ($Connect) { ssh-con }
+    else { Write-Host ("  {0}c 로 접속 · rs 로 상태 확인{1}" -f $sub, $reset) }
+}
+
 function Clear-ChangedHostKey {
     # fnc-ignore
     # 서버의 호스트 키가 known_hosts 기록과 달라 접속이 막히는지 확인하고, 그럴 때만 해당 항목을 지운다.
@@ -2113,7 +2499,7 @@ function del-host {
 
 
 #########################################################
-# SCP 파일 전송 / 원격 조회 (up/dn/rr/rl) 영역 Start
+# SCP 파일 전송 / 원격 조회 (up/dn/rr/rl/rt/rs) 영역 Start
 #########################################################
 
 function Test-ScpReady {
@@ -2840,6 +3226,364 @@ function rl # ls remote ($SV), 경로 생략 시 $SVDIR 목록. 기본은 색상
     }
 }
 
+function Format-RemoteUptime {
+    # fnc-ignore
+    # /proc/uptime의 초를 "12일 03시간 / 3시간 07분 / 12분"으로 쓴다. (rs 표시용)
+    param([double]$Seconds)
+
+    $total = [int][Math]::Round($Seconds)
+    $days = [int]($total / 86400)
+    $hours = [int](($total % 86400) / 3600)
+    $mins = [int](($total % 3600) / 60)
+
+    if ($days -gt 0) { return ("{0}일 {1:d2}시간" -f $days, $hours) }
+    if ($hours -gt 0) { return ("{0}시간 {1:d2}분" -f $hours, $mins) }
+    return ("{0}분" -f $mins)
+}
+
+function New-RatioBar {
+    # fnc-ignore
+    # 0~1 비율을 막대로 만들고 70% / 90%를 넘으면 색을 올린다. (rs 표시용)
+    param(
+        [double]$Ratio,
+        [int]$Width = 14
+    )
+
+    if ($Ratio -lt 0) { $Ratio = 0 }
+    if ($Ratio -gt 1) { $Ratio = 1 }
+
+    $esc = [char]27
+    $filled = [int][Math]::Round($Width * $Ratio)
+    $color = if ($Ratio -ge 0.9) { "$esc[38;5;203m" } elseif ($Ratio -ge 0.7) { "$esc[38;5;179m" } else { "$esc[38;5;108m" }
+
+    "{0}{1}$esc[38;5;238m{2}$esc[0m" -f $color, (([string][char]0x2588) * $filled), (([string][char]0x2591) * ($Width - $filled))
+}
+
+function Write-RemoteLogLine {
+    # fnc-ignore
+    # 로그 한 줄을 심각도에 따라 색을 입혀 쓴다. (rt 전용 - 서버 설정과 무관하게 이 PC에서 입힌다)
+    param([string]$Line)
+
+    $esc = [char]27
+    $red = "$esc[38;2;255;89;94m"
+    $yellow = "$esc[38;2;255;202;58m"
+    $cyan = "$esc[38;5;80m"
+    $dim = "$esc[38;5;245m"
+    $reset = "$esc[0m"
+
+    # tail이 파일을 바꿔 읽을 때 넣는 머리글
+    if ($Line -match '^==>.*<==$') {
+        Write-Host ("{0}{1}{2}" -f $cyan, $Line, $reset)
+        return
+    }
+
+    if ($Line -match '(?i)(\b(fatal|critical|crit|alert|emerg|error|err|fail|failed|failure|denied|refused)\b|no such file|cannot open|permission denied)') {
+        Write-Host ("{0}{1}{2}" -f $red, $Line, $reset)
+        return
+    }
+
+    if ($Line -match '(?i)\b(warn|warning)\b') {
+        Write-Host ("{0}{1}{2}" -f $yellow, $Line, $reset)
+        return
+    }
+
+    # 평범한 줄은 맨 앞 시각만 흐리게 해서 본문이 눈에 들어오게 한다.
+    $stamp = [regex]::Match($Line, '^(\S{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[^\s]*|\[[^\]]+\])')
+
+    if ($stamp.Success) {
+        Write-Host ("{0}{1}{2}{3}" -f $dim, $stamp.Value, $reset, $Line.Substring($stamp.Length))
+        return
+    }
+
+    Write-Host $Line
+}
+
+function rs {
+    # 선택된 SV의 상태를 한 화면으로 요약한다. (가동시간·부하·메모리·디스크·상위 프로세스·접속자 / 원격에는 설치할 것이 없다)
+    param([Alias('n')][int]$Top = 5)
+
+    if (-not (Test-ScpReady)) { return }
+
+    # 갓 설치한 서버에서도 되도록 /proc과 coreutils만 쓴다. 한 번의 접속으로 모두 받아 '@@구간' 표시로 나눈다.
+    # (여러 줄 문자열은 CR이 섞여 원격 셸이 오해할 수 있어 한 줄로 이어 붙인다)
+    $segments = @(
+        'echo @@host',
+        'hostname 2>/dev/null',
+        'grep -E ^PRETTY_NAME= /etc/os-release 2>/dev/null',
+        'uname -srm 2>/dev/null',
+        'echo @@uptime',
+        'cat /proc/uptime 2>/dev/null',
+        'echo @@load',
+        'cat /proc/loadavg 2>/dev/null',
+        'grep -c ^processor /proc/cpuinfo 2>/dev/null',
+        'echo @@mem',
+        'grep -E "^(MemTotal|MemFree|MemAvailable|Buffers|Cached|SwapTotal|SwapFree):" /proc/meminfo 2>/dev/null',
+        'echo @@disk',
+        'df -P -k 2>/dev/null',
+        'echo @@proc',
+        ('ps -eo pcpu=,pmem=,rss=,comm= 2>/dev/null | sort -k1 -rn | head -{0}' -f [Math]::Max(1, $Top)),
+        'echo @@who',
+        'who 2>/dev/null | head -5',
+        'echo @@end'
+    )
+
+    $esc = [char]27
+    $head = "$esc[1;38;2;231;111;81m"
+    $sub = "$esc[38;5;245m"
+    $dim = "$esc[38;5;245m"
+    $label = "$esc[38;5;110m"
+    $reset = "$esc[0m"
+    $labelWidth = 12
+
+    function Write-Row {
+        # fnc-ignore
+        param([string]$Name, [string]$Value)
+        $pad = [Math]::Max(1, $labelWidth - (Get-TextDisplayWidth $Name))
+        Write-Host ("  {0}{1}{2}{3}{4}" -f $label, $Name, $reset, (' ' * $pad), $Value)
+    }
+
+    Write-Host ("{0}status:$esc[0m {1}{2}$esc[0m  {0}({3}:{4})$esc[0m" -f $sub, $head, $global:SV, $global:SVIP, $global:SVPORT)
+
+    $response = Invoke-SvSsh -Command ($segments -join '; ')
+
+    if ($response.ExitCode -ne 0) {
+        Write-Error ("원격 상태 조회 실패 (exit code: {0})" -f $response.ExitCode)
+        return
+    }
+
+    $bucket = @{}
+    $section = ''
+
+    foreach ($raw in @($response.Lines)) {
+        $line = [string]$raw
+
+        if ($line.StartsWith('@@')) {
+            $section = $line.Substring(2).Trim()
+            if (-not $bucket.ContainsKey($section)) { $bucket[$section] = [System.Collections.Generic.List[string]]::new() }
+            continue
+        }
+
+        if (-not $section -or [string]::IsNullOrWhiteSpace($line)) { continue }
+        $bucket[$section].Add($line.TrimEnd())
+    }
+
+    if (-not $bucket.ContainsKey('end')) {
+        Write-Host "  조회가 중간에 끊겼습니다. 아래 내용은 받은 부분까지입니다." -ForegroundColor Yellow
+    }
+
+    # ── 호스트 / 커널 ──
+    $hostLines = @($bucket['host'])
+    $hostName = if ($hostLines.Count -gt 0) { $hostLines[0] } else { '' }
+    $pretty = ''
+    $kernel = ''
+
+    foreach ($line in $hostLines) {
+        if ($line -match '^PRETTY_NAME=\s*"?(.+?)"?\s*$') { $pretty = $Matches[1] }
+        elseif ($line -ne $hostName) { $kernel = $line }
+    }
+
+    if ($hostName -or $pretty -or $kernel) {
+        $parts = @($hostName, $pretty, $kernel) | Where-Object { $_ }
+        Write-Row '호스트' ($parts -join " $dim·$reset ")
+    }
+
+    # ── 가동시간 ──
+    $uptimeLine = if (@($bucket['uptime']).Count -gt 0) { @($bucket['uptime'])[0] } else { '' }
+
+    if ($uptimeLine -match '^\s*([0-9.]+)') {
+        $booted = (Get-Date).AddSeconds( - [double]$Matches[1])
+        Write-Row '가동시간' ("{0}  {1}({2:yyyy-MM-dd HH:mm} 부팅){3}" -f (Format-RemoteUptime ([double]$Matches[1])), $dim, $booted, $reset)
+    }
+
+    # ── 부하 ──
+    $loadLines = @($bucket['load'])
+
+    if ($loadLines.Count -gt 0 -and $loadLines[0] -match '^([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)') {
+        $one = [double]$Matches[1]
+        $text = "{0} {1} {2}" -f $Matches[1], $Matches[2], $Matches[3]
+        $cpu = 0
+
+        if ($loadLines.Count -gt 1) { [void][int]::TryParse($loadLines[1].Trim(), [ref]$cpu) }
+
+        if ($cpu -gt 0) {
+            # 1분 부하를 코어 수로 나눠 100%에 얼마나 가까운지로 본다.
+            $text = "{0}  {1}(CPU {2}개 · 1분 {3:0}%){4}" -f $text, $dim, $cpu, ($one / $cpu * 100), $reset
+        }
+
+        Write-Row '부하' $text
+    }
+
+    # ── 메모리 / 스왑 ──
+    $meminfo = @{}
+
+    foreach ($line in @($bucket['mem'])) {
+        if ($line -match '^(\w+):\s+(\d+)\s*kB') { $meminfo[$Matches[1]] = [long]$Matches[2] }
+    }
+
+    if ($meminfo.ContainsKey('MemTotal') -and $meminfo['MemTotal'] -gt 0) {
+        $total = $meminfo['MemTotal']
+
+        # MemAvailable이 없는 옛 커널은 free+buffers+cached로 대신 센다.
+        $available = if ($meminfo.ContainsKey('MemAvailable')) { $meminfo['MemAvailable'] }
+            else { [long]$meminfo['MemFree'] + [long]$meminfo['Buffers'] + [long]$meminfo['Cached'] }
+
+        $used = $total - $available
+        $ratio = $used / $total
+
+        Write-Row '메모리' ("{0} {1,3:0}%  {2}{3} / {4}{5}" -f (New-RatioBar -Ratio $ratio), ($ratio * 100), $dim, (Format-RemoteSize ($used * 1024)).Text, (Format-RemoteSize ($total * 1024)).Text, $reset)
+    }
+
+    if ($meminfo.ContainsKey('SwapTotal') -and $meminfo['SwapTotal'] -gt 0) {
+        $swapTotal = $meminfo['SwapTotal']
+        $swapUsed = $swapTotal - [long]$meminfo['SwapFree']
+        $swapRatio = $swapUsed / $swapTotal
+
+        Write-Row '스왑' ("{0} {1,3:0}%  {2}{3} / {4}{5}" -f (New-RatioBar -Ratio $swapRatio), ($swapRatio * 100), $dim, (Format-RemoteSize ($swapUsed * 1024)).Text, (Format-RemoteSize ($swapTotal * 1024)).Text, $reset)
+    }
+
+    # ── 디스크 ──
+    # tmpfs 같은 가상 파일시스템은 용량 점검에 의미가 없어 제외한다.
+    $skip = @('tmpfs', 'devtmpfs', 'none', 'overlay', 'udev', 'squashfs', 'shm', 'efivarfs', 'ramfs', 'cgroup')
+    $disks = [System.Collections.Generic.List[object]]::new()
+
+    foreach ($line in @($bucket['disk'])) {
+        if ($line -match '^Filesystem') { continue }
+
+        # df -P는 "장치 1K블록 사용 가용 사용% 마운트" 6열로 줄바꿈 없이 내보낸다.
+        $cols = -split $line
+        if ($cols.Count -lt 6) { continue }
+        if ($skip -contains $cols[0].ToLowerInvariant()) { continue }
+
+        $totalKb = 0L
+        $usedKb = 0L
+
+        if (-not [long]::TryParse($cols[1], [ref]$totalKb)) { continue }
+        [void][long]::TryParse($cols[2], [ref]$usedKb)
+        if ($totalKb -le 0) { continue }
+
+        # 사용률은 df가 적은 값(예약 블록을 뺀 기준)을 그대로 쓴다. df -h와 숫자가 달라 보이지 않게 하려는 것.
+        $ratio = if ($cols[4] -match '^([0-9]+)%$') { [double]$Matches[1] / 100 } else { $usedKb / $totalKb }
+
+        $disks.Add([pscustomobject]@{ Mount = $cols[5]; Ratio = $ratio; Used = $usedKb; Total = $totalKb })
+    }
+
+    $shownDisks = @($disks | Sort-Object Ratio -Descending | Select-Object -First 5)
+
+    for ($i = 0; $i -lt $shownDisks.Count; $i++) {
+        $row = $shownDisks[$i]
+        $name = if ($i -eq 0) { '디스크' } else { '' }
+
+        Write-Row $name ("{0} {1,3:0}%  {2,-16} {3}{4} / {5}{6}" -f (New-RatioBar -Ratio $row.Ratio), ($row.Ratio * 100), $row.Mount, $dim, (Format-RemoteSize ($row.Used * 1024)).Text, (Format-RemoteSize ($row.Total * 1024)).Text, $reset)
+    }
+
+    # ── 상위 프로세스 ──
+    $procLines = @($bucket['proc'])
+    $shownProc = 0
+
+    foreach ($line in $procLines) {
+        $cols = -split $line.Trim()
+        if ($cols.Count -lt 4) { continue }
+
+        $pcpu = 0.0
+        $pmem = 0.0
+        $rss = 0L
+        [void][double]::TryParse($cols[0], [ref]$pcpu)
+        [void][double]::TryParse($cols[1], [ref]$pmem)
+        [void][long]::TryParse($cols[2], [ref]$rss)
+
+        # comm에 공백이 있을 수 있어 나머지 열을 모두 이름으로 본다.
+        $command = ($cols[3..($cols.Count - 1)] -join ' ')
+        $name = if ($shownProc -eq 0) { '프로세스' } else { '' }
+
+        Write-Row $name ("{0,5:0.0}% cpu  {1,4:0.0}% mem  {2}{3,-9}{4} {5}" -f $pcpu, $pmem, $dim, (Format-RemoteSize ($rss * 1024)).Text, $reset, $command)
+        $shownProc++
+    }
+
+    # ── 접속자 ──
+    $whoLines = @($bucket['who'])
+
+    if ($whoLines.Count -eq 0) {
+        Write-Row '접속자' ("{0}없음{1}" -f $dim, $reset)
+    }
+    else {
+        for ($i = 0; $i -lt $whoLines.Count; $i++) {
+            $name = if ($i -eq 0) { '접속자' } else { '' }
+            Write-Row $name (($whoLines[$i] -replace '\s+', ' ').Trim())
+        }
+    }
+
+    if ($bucket.Count -eq 0) {
+        Write-Host "  /proc을 읽지 못했습니다. 리눅스 서버가 아닐 수 있습니다." -ForegroundColor Yellow
+    }
+}
+
+function rt {
+    # SV의 원격 로그를 실시간으로 따라 본다. 색상 강조는 이 PC에서 입힌다. (-n 줄수, -p 패턴, -o 한 번만, 종료 Ctrl+C)
+    param(
+        [Parameter(Position = 0)]
+        [string]$Path,
+
+        [Alias('n')][int]$Lines = 50,
+        [Alias('p')][string]$Pattern,
+        [Alias('o')][switch]$Once
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        Write-Host "사용법: rt <원격 로그경로> [-n 줄수] [-p 패턴] [-o 한 번만]   (Tab 자동완성, 종료 Ctrl+C)" -ForegroundColor Yellow
+        Write-Host "  예: rt /var/log/messages   /   rt app.log -p error   /   rt /var/log/secure -n 200 -o" -ForegroundColor DarkCyan
+        return
+    }
+
+    if (-not (Test-ScpReady)) { return }
+
+    if ($Pattern -and $Pattern.Contains("'")) {
+        Write-Error "패턴에 작은따옴표(')는 쓸 수 없습니다. 다른 표현으로 적어 주세요."
+        return
+    }
+
+    # 원격 셸이 공백 경로를 쪼개지 않게 따옴표로 감싼다. ~는 따옴표 안에서 펼쳐지지 않아 $HOME으로 바꾼다. (rl과 같은 규칙)
+    $resolved = Resolve-SvRemotePath -Path $Path
+    $quoted = if ($resolved -eq '~' -or $resolved.StartsWith('~/')) { '"$HOME' + $resolved.Substring(1) + '"' } else { '"' + $resolved + '"' }
+
+    # -F는 파일이 교체(로그 로테이션)돼도 이름을 다시 열어 계속 따라간다.
+    $remoteCmd = "tail -n {0}{1} {2}" -f [Math]::Max(1, $Lines), $(if ($Once) { '' } else { ' -F' }), $quoted
+
+    if ($Pattern) {
+        # grep은 줄 단위로 바로 흘려보내야 실시간으로 보인다 (--line-buffered).
+        $remoteCmd = "{0} | grep --line-buffered -i -- '{1}'" -f $remoteCmd, $Pattern
+    }
+
+    # 다른 명령으로 넘길 때(rt x -o | sls fail)는 색을 입히지 않고 문자열만 흘려보낸다.
+    $piped = $MyInvocation.PipelinePosition -lt $MyInvocation.PipelineLength
+
+    $esc = [char]27
+    $head = "$esc[1;38;2;231;111;81m"
+    $sub = "$esc[38;5;245m"
+
+    if (-not $piped) {
+        $note = if ($Once) { "최근 {0}줄" -f $Lines } else { "최근 {0}줄 + 따라가기 · Ctrl+C 종료" -f $Lines }
+        if ($Pattern) { $note = "{0} · 필터 '{1}'" -f $note, $Pattern }
+
+        Write-Host ("{0}tail:$esc[0m {1}{2}:{3}$esc[0m  {0}({4}:{5})$esc[0m" -f $sub, $head, $global:SV, $resolved, $global:SVIP, $global:SVPORT)
+        Write-Host ("  {0}{1}$esc[0m" -f $sub, $note)
+    }
+
+    # 한글 로그가 깨지지 않게 받는 동안만 UTF-8로 바꾼다.
+    $prevEncoding = [Console]::OutputEncoding
+
+    try {
+        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+        & ssh -o BatchMode=yes -o ConnectTimeout=5 -o RemoteCommand=none -o RequestTTY=no -p $global:SVPORT $global:SV $remoteCmd 2>&1 |
+            ForEach-Object {
+                if ($piped) { [string]$_ } else { Write-RemoteLogLine -Line ([string]$_) }
+            }
+    }
+    finally {
+        [Console]::OutputEncoding = $prevEncoding
+    }
+}
+
 # up/dn/rr/rl 원격 경로 자동완성 공용: Tab을 누를 때마다 ssh로 원격 디렉터리 목록을 조회한다. (캐시 없음)
 function Get-SshRemotePathCompletion {
     # fnc-ignore
@@ -2997,15 +3741,30 @@ Register-ArgumentCompleter -Native -CommandName rl -ScriptBlock {
     Get-SshRemotePathCompletion -HostAlias $sv.Value -Port ([string]$svport.Value) -WordToComplete $wordToComplete -BaseDir ([string]$global:SVDIR)
 }
 
+# rt는 로그 파일 하나를 따라가는 명령이라 SV 기준 파일+디렉터리를 후보로 보여준다.
+Register-ArgumentCompleter -CommandName rt -ParameterName Path -ScriptBlock {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+    $sv = Get-Variable SV -Scope Global -ErrorAction SilentlyContinue
+    $svport = Get-Variable SVPORT -Scope Global -ErrorAction SilentlyContinue
+
+    if (-not $sv -or [string]::IsNullOrWhiteSpace([string]$sv.Value) -or
+        -not $svport -or [string]::IsNullOrWhiteSpace([string]$svport.Value)) {
+        return
+    }
+
+    Get-SshRemotePathCompletion -HostAlias $sv.Value -Port ([string]$svport.Value) -WordToComplete $wordToComplete -BaseDir ([string]$global:SVDIR)
+}
+
 #########################################################
-# SCP 파일 전송 / 원격 조회 (up/dn/rr/rl) 영역 End
+# SCP 파일 전송 / 원격 조회 (up/dn/rr/rl/rt/rs) 영역 End
 #########################################################
 
 
 #########################################################
 # ssh 원격 관리 도움말 영역 Start
 #########################################################
-# 위 SSH/SCP 영역의 원격 명령(ss/sd/sb/xs/xd/c/auth/sw/xw/rl/up/dn/rr)을 사용 흐름 순서로 정리한 가이드.
+# 위 SSH/SCP 영역의 원격 명령(ss/sd/sb/xs/xd/c/auth/p/pt/rs/rb/sw/xw/rl/rt/up/dn/rr)을 사용 흐름 순서로 정리한 가이드.
 # 원격 명령을 고치면 이 설명도 함께 갱신할 것. (구 ssh-help.ps1에서 프로필로 병합)
 
 function Add-HelpHighlight {
@@ -3226,6 +3985,7 @@ function ssh-help {
     Add-Title "[ 전체 흐름 ]"
     Add-Plain "  $esc[92mss$esc[0m 서버 선택  ->  $esc[92mc$esc[0m 접속 / $esc[92msw$esc[0m 원격 경로 고정  ->  $esc[92mrl$esc[0m 목록 확인 / $esc[92mup dn$esc[0m 파일 전송"
     Add-Plain "  서버간 전송은 $esc[92msd$esc[0m 로 대상까지 고른 뒤 $esc[92mrr$esc[0m."
+    Add-Plain "  상태 점검은 $esc[92mp$esc[0m ping -> $esc[92mpt$esc[0m 포트 -> $esc[92mrs$esc[0m 요약, 로그는 $esc[92mrt$esc[0m, 재부팅은 $esc[92mrb$esc[0m."
     Add-Plain ""
     Add-Plain "  선택 상태는 프롬프트 윗줄에 표시된다 - SV | ID | IP | PORT | DIR (DST는 아래 줄)."
 
@@ -3259,6 +4019,16 @@ function ssh-help {
     Add-Note "한 줄에서 갱신되고 상태가 바뀔 때만 기록이 남는다 (재부팅 확인용)"
     Add-Note "대상에 IP나 호스트명을 직접 줄 수 있다. -i 간격(초) -c 횟수, 종료는 Ctrl+C"
     Add-Cmd "ping-test"        "선택된 SVIP로 계속 ping (출력이 쌓이는 예전 방식)"
+    Add-Cmd "pt [대상] [포트]"  "TCP 포트가 열렸는지 확인 - 열림/닫힘/무응답을 구분한다"
+    Add-Note "대상·포트를 생략하면 SVIP와 SVPORT+22/80/443. pt 8080 처럼 포트만 줘도 된다"
+    Add-Note "pt 22,80,443 (쉼표) / pt 8000-8010 (범위, 한 번에 64개까지) / -t 타임아웃(ms)"
+    Add-Note "ping은 되는데 접속이 안 될 때 sshd가 떴는지 여기서 먼저 확인한다"
+    Add-Cmd "rs"               "SV 상태 요약 - 가동시간·부하·메모리·디스크·상위 프로세스·접속자"
+    Add-Note "/proc과 기본 명령만 쓰므로 갓 설치한 서버에서도 그대로 동작한다 (-n 프로세스 줄수)"
+    Add-Cmd "rb"               "SV를 재부팅하고 다운 -> 복구까지 한 줄에서 지켜본다"
+    Add-Note "다운 확인 -> 응답 재개 -> ssh 포트 열림 -> 로그인 확인 순서로 단계마다 기록을 남긴다"
+    Add-Note "실행 전 y/N로 한 번 확인한다 (-y 확인 생략, -c 복구되면 바로 접속)"
+    Add-Note "root가 아니면 sudo -n을 쓰므로 비밀번호 없는 sudo가 필요하다. -w 단계별 최대 대기(분, 기본 10)"
     Add-Cmd "d [-r|-l|-u|-d|-g]" "현재 세션을 화면 분할로 복제 (= dup, 기본 -r 우측)"
     Add-Note "-g: 2x2 4분할 (세로 분할 후 양쪽을 가로 분할, 포커스는 원래 pane)"
     Add-Note "새 pane이 SV/DST/SVDIR 선택 상태를 그대로 이어받는다"
@@ -3280,6 +4050,12 @@ function ssh-help {
     Add-Note "Tab: SVDIR 안의 파일/디렉터리 후보"
     Add-Note "- 로 시작하는 인자는 ls 옵션: rl logs -t (최신순), rl -S (크기순)"
     Add-Note "rl '*.log' 처럼 와일드카드도 가능 (서버 셸이 펼친다)"
+
+    Add-Section "로그 보기"
+    Add-Cmd "rt <로그경로>"     "원격 로그를 실시간으로 따라 본다 (tail -F, 종료 Ctrl+C)"
+    Add-Note "ERROR/FATAL 줄은 빨강, WARN 줄은 노랑 - 색은 이 PC에서 입힌다"
+    Add-Note "-n 처음 보여줄 줄수(기본 50) / -p 패턴 필터(대소문자 무시) / -o 따라가지 않고 한 번만"
+    Add-Note "Tab: SVDIR 기준 자동완성. 권한이 필요한 로그는 접속 계정에 읽기 권한이 있어야 한다"
 
     Add-Section "경로 해석 규칙"
     Add-Cmd "test.txt"         "상대 경로 -> SVDIR 기준 (SVDIR이 없으면 원격 홈)"
@@ -3320,12 +4096,22 @@ function ssh-help {
     Add-Plain "    sb srchost dsthost  # 위 두 줄을 한 번에"
     Add-Plain "    rr backup.tar ~/    # 원본:backup.tar -> 대상:~/"
 
+    Add-Section "재부팅 점검"
+    Add-Plain "    ss myhost           # 서버 선택"
+    Add-Plain "    rb                  # 확인 후 재부팅 - 다운/복구를 한 줄로 지켜본다"
+    Add-Plain "    pt                  # 서비스 포트까지 확인"
+    Add-Plain "    rs                  # 올라온 서버 상태 요약"
+    Add-Section "장애 로그 확인"
+    Add-Plain "    rt /var/log/messages -p error   # error 줄만 실시간으로"
+
     # ── 6. 문제 해결 ─────────────────────────────────────────────
     Add-Title "[ 6. 자주 겪는 문제 ]"
     Add-Cmd "자동완성이 로컬 경로" "SV 미선택이거나 키 인증이 안 된 상태 - ss 후 auth 실행"
     Add-Cmd "변수 미설정 안내"    "up/dn/rl은 ss가, rr은 ss + sd가 모두 필요하다"
     Add-Cmd "호스트 키 경고"     "REMOTE HOST IDENTIFICATION HAS CHANGED - auth가 자동 정리한다"
     Add-Note "수동으로 지우려면 del-host <IP> (known_hosts 자동 백업 후 해당 항목 삭제)"
+    Add-Cmd "ping 되는데 접속 불가" "pt로 포트 확인 - sshd 기동 전이면 잠시 후 다시 시도"
+    Add-Cmd "rb가 거절될 때"     "sudo가 비밀번호를 요구하는 경우 - c로 접속해 직접 재부팅"
     Add-Cmd "전체 명령 목록"     "fnc (함수 목록) / fnc-alias (alias 목록)"
 
     Add-Plain ""
