@@ -4030,6 +4030,7 @@ function ssh-help {
     Add-Cmd "ws"               "열린 탭/분할과 각 pane의 SV·경로를 저장했다가 그대로 다시 연다"
     Add-Note "ws (목록) / ws save <이름> [-m 메모] / ws show <이름> / ws load <이름> [-here] / ws rm <이름> / ws rename"
     Add-Note "저장은 새 탭에서 실행한다 - 그 탭은 스냅샷에서 빠진다. 탭 순서·분할 모양·분할 비율까지 복원된다"
+    Add-Note "각 pane은 프로필을 읽을 때 감시기를 건다 - 프로필을 바꾼 뒤 기존 pane은 . $PROFILE 을 한 번 실행해야 저장 대상이 된다"
     Add-Note "명령 실행 중인 pane은 상태를 답할 수 없어 어느 pane인지 알려준다 (Ctrl+C로 멈춘 뒤 다시 저장, -f면 구조만 저장)"
     Add-Note "복원하면 SV/DST/SVDIR·작업 경로·제목·탭 색이 돌아오고, 실행 중이던 명령은 히스토리에 들어간다(위 화살표)"
     Add-Cmd "rsa-pubkey"       "로컬 공개키(id_rsa.pub) 내용을 출력한다"
@@ -4674,7 +4675,10 @@ function Get-WsTerminalLayout {
     # pane 자체의 UIA 이름은 셸이 보낸 제목을 따라가지 않는다(프로필 이름 그대로다). 대신 탭 이름이
     # '지금 활성화된 pane의 제목'을 보여주므로, pane을 하나씩 활성화하며 탭 이름(그 pane이 붙인 표식)과
     # 포커스된 pane의 사각형을 짝지어 읽는다. 비활성 탭은 내용이 만들어져 있지 않아 탭도 하나씩 활성화한다.
-    param([string]$SelfMarker)
+    #
+    # RequestPath를 주면 pane을 읽기 직전에 요청 파일을 다시 만들어 표식을 새로 달게 한다.
+    # (프롬프트가 한 번 더 그려지면 제목이 원래대로 돌아가 표식이 사라지기 때문이다)
+    param([string]$SelfMarker, [string]$RequestPath)
 
     Add-Type -AssemblyName UIAutomationClient
     Add-Type -AssemblyName UIAutomationTypes
@@ -4765,10 +4769,18 @@ function Get-WsTerminalLayout {
 
                 if ($canFocus) { & wt -w 0 focus-pane -t $target 2>$null }
 
-                $deadline = (Get-Date).AddMilliseconds(1500)
+                # 표식을 다시 달게 한다 (이 pane이 그 사이 제목을 원래대로 되돌렸을 수 있다).
+                Update-WsRequest -Path $RequestPath
+
+                $deadline = (Get-Date).AddMilliseconds(2500)
+                $retry = 0
 
                 while ((Get-Date) -lt $deadline) {
                     Start-Sleep -Milliseconds 120
+                    $retry++
+
+                    # 중간에 한 번 더 요청해 둔다 (느린 PC에서 첫 요청이 늦게 처리되는 경우).
+                    if ($retry -eq 6) { Update-WsRequest -Path $RequestPath }
 
                     $focused = @($terms | Where-Object { $_.Current.HasKeyboardFocus })
                     if ($focused.Count -ne 1) { continue }
@@ -4889,6 +4901,32 @@ function Get-WsWindowRect {
         Y = $rect.Top
         W = ($rect.Right - $rect.Left)
         H = ($rect.Bottom - $rect.Top)
+    }
+}
+
+function Update-WsRequest {
+    # fnc-ignore
+    # 요청 파일을 다시 만들어 각 pane이 표식(제목)을 새로 달게 한다. (같은 이름으로 다시 만들어야 감시기가 반응한다)
+    param([string]$Path)
+
+    if (-not $Path) { return }
+
+    try {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        Set-Content -LiteralPath $Path -Value 'again' -Encoding utf8
+    }
+    catch { }
+}
+
+function Set-WsPaneState {
+    # fnc-ignore
+    # pane 하나에 그 pane이 보내온 상태를 붙인다.
+    param([object]$Leaf, [object]$State)
+
+    Add-Member -InputObject $Leaf -NotePropertyName Responded -NotePropertyValue $true -Force
+
+    foreach ($nm in 'Pid', 'Title', 'TabColor', 'Cwd', 'Last', 'Cols', 'Rows', 'SV', 'SVID', 'SVIP', 'SVPORT', 'SVDIR', 'DST', 'DSTID', 'DSTIP', 'DSTPORT') {
+        Add-Member -InputObject $Leaf -NotePropertyName $nm -NotePropertyValue ([string]$State.$nm) -Force
     }
 }
 
@@ -5108,16 +5146,17 @@ function Save-WsSnapshot {
     Write-TabTitleSequence $selfMarker
     Set-Content -LiteralPath $requestPath -Value $id -Encoding utf8
 
-    # 유휴 pane은 0.3초 안에 답한다. 느린 경우를 감안해 1.5초까지 기다린다.
-    $deadline = (Get-Date).AddMilliseconds(1500)
-    $replies = @()
+    # 유휴 pane은 0.3초 안에 답한다. 느린 PC를 감안해 1.5초 기다린 뒤 화면을 읽는다.
+    Start-Sleep -Milliseconds 1500
 
-    while ((Get-Date) -lt $deadline) {
-        Start-Sleep -Milliseconds 150
-        $replies = @(Get-ChildItem -LiteralPath $global:ws_req_dir -Filter ("reply-{0}-*.json" -f $id) -ErrorAction SilentlyContinue)
-    }
+    $layout = $null
 
+    try { $layout = Get-WsTerminalLayout -SelfMarker $selfMarker -RequestPath $requestPath }
+    catch { Write-Error ("화면 구조를 읽지 못했습니다: {0}" -f $_.Exception.Message) }
+
+    # 화면을 읽는 동안(pane마다 요청을 다시 보낸다) 늦게 도착한 응답까지 함께 모은다.
     $states = @{}
+    $replies = @(Get-ChildItem -LiteralPath $global:ws_req_dir -Filter ("reply-{0}-*.json" -f $id) -ErrorAction SilentlyContinue)
 
     foreach ($reply in $replies) {
         try {
@@ -5126,11 +5165,6 @@ function Save-WsSnapshot {
         }
         catch { }
     }
-
-    $layout = $null
-
-    try { $layout = Get-WsTerminalLayout -SelfMarker $selfMarker }
-    catch { Write-Error ("화면 구조를 읽지 못했습니다: {0}" -f $_.Exception.Message) }
 
     # 표식을 되돌린다 (다른 pane은 감시기가, 이 pane은 직접).
     Set-Content -LiteralPath $releasePath -Value $id -Encoding utf8
@@ -5190,10 +5224,7 @@ function Save-WsSnapshot {
             }
 
             if ($state) {
-                Add-Member -InputObject $leaf -NotePropertyName Responded -NotePropertyValue $true -Force
-                foreach ($nm in 'Pid', 'Title', 'TabColor', 'Cwd', 'Last', 'Cols', 'Rows', 'SV', 'SVID', 'SVIP', 'SVPORT', 'SVDIR', 'DST', 'DSTID', 'DSTIP', 'DSTPORT') {
-                    Add-Member -InputObject $leaf -NotePropertyName $nm -NotePropertyValue ([string]$state.$nm) -Force
-                }
+                Set-WsPaneState -Leaf $leaf -State $state
                 if (-not $title -and $state.Title) { $title = [string]$state.Title }
                 if (-not $color -and $state.TabColor) { $color = [string]$state.TabColor }
             }
@@ -5201,7 +5232,7 @@ function Save-WsSnapshot {
                 Add-Member -InputObject $leaf -NotePropertyName Responded -NotePropertyValue $false -Force
                 Add-Member -InputObject $leaf -NotePropertyName Title -NotePropertyValue $leaf.Name -Force
                 Add-Member -InputObject $leaf -NotePropertyName Cwd -NotePropertyValue '' -Force
-                $missing += [pscustomobject]@{ Tab = $tab.Index; TabTitle = $tab.Title; Spot = (Get-WsPaneSpot -Pane $leaf -All $panes); Name = $leaf.Name }
+                $missing += [pscustomobject]@{ Tab = $tab.Index; TabTitle = $tab.Title; Spot = (Get-WsPaneSpot -Pane $leaf -All $panes); Name = $leaf.Name; Leaf = $leaf }
             }
         }
 
@@ -5219,16 +5250,39 @@ function Save-WsSnapshot {
         return
     }
 
+    # 자리를 못 찾은 pane과 쓰이지 않은 응답이 하나씩만 남았다면 둘은 같은 pane이다 (표식을 제때 못 읽은 경우).
+    $leftover = @($states.Keys | Where-Object { $_ -ne $selfMarker -and -not $usedStates.ContainsKey($_) })
+
+    if ($leftover.Count -eq 1 -and $missing.Count -eq 1) {
+        Set-WsPaneState -Leaf $missing[0].Leaf -State $states[$leftover[0]]
+        $usedStates[$leftover[0]] = $true
+        $missing = @()
+    }
+
     if ($missing.Count -gt 0) {
+        # 상태를 보내왔는데도 쓰이지 못한 응답 = 화면에서 그 pane의 자리를 찾지 못한 경우.
+        $orphans = @($states.Keys | Where-Object { $_ -ne $selfMarker -and -not $usedStates.ContainsKey($_) })
+
         Write-Host ""
-        Write-Host ("응답하지 않은 pane {0}개 - 명령을 실행 중인 pane은 상태를 답할 수 없습니다." -f $missing.Count) -ForegroundColor Yellow
+        Write-Host ("상태를 담지 못한 pane {0}개" -f $missing.Count) -ForegroundColor Yellow
 
         foreach ($item in $missing) {
             Write-Host ("  탭[{0}] '{1}' 의 {2} pane   (제목: {3})" -f $item.Tab, $item.TabTitle, $item.Spot, $item.Name) -ForegroundColor Yellow
         }
 
-        Write-Host "  해당 pane에서 Ctrl+C로 잠깐 멈춘 뒤 다시 저장하면 변수까지 저장됩니다." -ForegroundColor DarkCyan
-        Write-Host "  ssh로 원격 셸에 들어가 있는 pane은 Ctrl+C로 빠져나오지 못합니다 - 구조만 저장하려면 ws save <이름> -f" -ForegroundColor DarkCyan
+        if ($orphans.Count -gt 0) {
+            Write-Host ("  그중 {0}개는 상태를 보내왔지만 화면에서 자리를 찾지 못했습니다 - 쉬고 있는 pane인데 경고가 뜬다면 이 경우입니다." -f $orphans.Count) -ForegroundColor Yellow
+            Write-Host "  pane을 찾을 때 제목을 잠깐 표식으로 바꿔 쓰므로, Windows Terminal 설정에 suppressApplicationTitle: false 가 있어야 합니다." -ForegroundColor DarkCyan
+            Write-Host "  탭 이름을 마우스로 직접 지정했거나 --title로 연 탭도 제목이 고정돼 찾지 못합니다 (탭 이름 재설정으로 풀립니다)." -ForegroundColor DarkCyan
+        }
+        else {
+            Write-Host "  1) 프로필이 바뀌기 전에 연 pane입니다 - 감시기는 프로필을 읽을 때 걸리므로, 그 pane에서 . `$PROFILE 을 한 번 실행하거나 새로 열어야 합니다." -ForegroundColor DarkCyan
+            Write-Host "     (reload는 프롬프트만 새로고침하고 프로필을 다시 읽지 않습니다)" -ForegroundColor DarkCyan
+            Write-Host "  2) 명령을 실행 중인 pane입니다 - Ctrl+C로 잠깐 멈춘 뒤 다시 저장하면 변수까지 저장됩니다." -ForegroundColor DarkCyan
+            Write-Host "     ssh로 원격 셸에 들어가 있는 pane은 Ctrl+C로 빠져나오지 못하니 먼저 exit 해 주세요." -ForegroundColor DarkCyan
+        }
+
+        Write-Host "  구조만 저장하려면: ws save <이름> -f" -ForegroundColor DarkCyan
 
         if (-not $Force) {
             Write-Host "저장하지 않았습니다." -ForegroundColor Yellow
