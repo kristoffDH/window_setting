@@ -2567,6 +2567,67 @@ esac
     }
 }
 
+function init-sv {
+    # alias-fn: 새 서버에 처음 붙일 때 필요한 설정을 한 번에 한다. (= auth 공개키 등록 + keep-title 탭 제목 보호)
+    param(
+        [Parameter(Position = 0)]
+        [string]$Target,
+
+        [Parameter(Position = 1)]
+        [int]$Port = 0,
+
+        [Alias('h')]
+        [switch]$Help
+    )
+
+    if ($Help -or $Target -match '^(--?help|[-/]\?|/h)$') {
+        Write-Host "사용법: init-sv [대상] [포트]   새 서버 초기 설정 (auth 등록 -> keep-title)" -ForegroundColor Yellow
+        Write-Host "  대상·포트 규칙은 auth와 같다. 생략하면 선택된 SV를 쓴다." -ForegroundColor DarkCyan
+        Write-Host "  공개키 등록이 확인된 뒤에만 keep-title로 넘어간다 (keep-title은 bash 전용)." -ForegroundColor DarkCyan
+        return
+    }
+
+    # 두 단계가 같은 서버를 보도록 대상을 여기서 한 번만 정한다. (auth/keep-title과 같은 규칙)
+    if ($Target) {
+        $dest = $Target
+        $usePort = $Port
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace([string]$global:SV)) {
+        $dest = [string]$global:SV
+        $usePort = if ($Port -gt 0) { $Port } elseif ($global:SVPORT) { [int]$global:SVPORT } else { 0 }
+    }
+    else {
+        Write-Host "사용법: init-sv [대상] [포트]   (대상을 생략하면 선택된 SV - 먼저 ss로 서버 선택)" -ForegroundColor Yellow
+        return
+    }
+
+    $esc = [char]27
+    $head = "$esc[1;38;2;231;111;81m"
+    $sub = "$esc[38;5;245m"
+
+    Write-Host ("{0}init-sv:$esc[0m {1}{2}$esc[0m  {0}(공개키 등록 + 탭 제목 보호)$esc[0m" -f $sub, $head, $dest)
+    Write-Host ""
+    Write-Host "[1/2] auth - 공개키 등록" -ForegroundColor Cyan
+
+    if ($usePort -gt 0) { auth $dest $usePort } else { auth $dest }
+
+    # auth는 성공 여부를 돌려주지 않으므로, 비밀번호 없이 실제로 붙는지 여기서 직접 확인한다.
+    $portArgs = if ($usePort -gt 0) { @('-p', $usePort) } else { @() }
+    & ssh @portArgs -o BatchMode=yes -o PasswordAuthentication=no -o ConnectTimeout=5 -o RemoteCommand=none -o RequestTTY=no $dest exit 2>$null
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ""
+        Write-Host "키 인증이 아직 되지 않아 여기서 멈춥니다. (keep-title 건너뜀)" -ForegroundColor Yellow
+        Write-Host ("  {0}auth를 다시 실행하거나, 서버의 sshd 설정(PubkeyAuthentication)을 확인해 주세요.$esc[0m" -f $sub)
+        return
+    }
+
+    Write-Host ""
+    Write-Host "[2/2] keep-title - 탭 제목 보호" -ForegroundColor Cyan
+
+    keep-title $dest $usePort
+}
+
 function del-host {
     # known_hosts에서 지정한 IP 항목을 삭제한다(자동 백업 생성).
     param(
@@ -4214,6 +4275,9 @@ function ssh-help {
     Add-Cmd "keep-title [대상]" "원격 bash가 탭 이름을 덮어쓰지 않게 ~/.bashrc를 설정 (서버마다 한 번)"
     Add-Note "접속하면 프롬프트가 탭 제목을 바꿔 쓰는데, 그걸 막아 tb로 지정한 이름이 유지된다"
     Add-Note "bash 전용. 고치기 전에 원격 ~/.bashrc를 백업하고, 적용 후 새 셸에서 실제로 사라졌는지 확인한다 (제거: keep-title -r)"
+    Add-Cmd "init-sv [대상] [포트]" "새 서버 초기 설정을 한 번에 (= auth 공개키 등록 + keep-title)"
+    Add-Note "키 인증이 확인된 뒤에만 keep-title로 넘어간다. 인자 규칙은 auth와 같다"
+    Add-Note "auth·keep-title을 따로 실행해도 되고, 이미 끝난 단계는 건너뛴다"
     Add-Cmd "p [대상]"         "ping 상태 감시 (= ping-watch, 대상을 생략하면 SVIP)"
     Add-Note "한 줄에서 갱신되고 상태가 바뀔 때만 기록이 남는다 (재부팅 확인용)"
     Add-Note "대상에 IP나 호스트명을 직접 줄 수 있다. -i 간격(초) -c 횟수, 종료는 Ctrl+C"
@@ -4289,6 +4353,10 @@ function ssh-help {
 
     # ── 5. 사용 예시 ─────────────────────────────────────────────
     Add-Title "[ 5. 사용 예시 ]"
+    Add-Section "새 서버 처음 붙이기"
+    Add-Plain "    ss newhost          # 서버 선택 (ssh config에 Host를 먼저 등록)"
+    Add-Plain "    init-sv             # 공개키 등록 -> 탭 제목 보호까지 한 번에"
+    Add-Plain "    rs                  # 올라온 서버 상태 요약으로 접속 확인"
     Add-Section "로그 한 개 받아오기"
     Add-Plain "    ss myhost           # 서버 선택"
     Add-Plain "    sw /var/log         # 기준 경로 고정"
