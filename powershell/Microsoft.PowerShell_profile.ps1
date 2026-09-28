@@ -4651,8 +4651,18 @@ function Invoke-WsPaneRequest {
         Title    = [string]$env:OMP_TITLE
         TabColor = [string]$env:OMP_TABCOLOR
         Cwd      = if ($PWD.Provider.Name -eq 'FileSystem') { $PWD.ProviderPath } else { $HOME }
+        Cols     = 0
+        Rows     = 0
         Last     = ''
     }
+
+    # 창 크기를 글자 수(cols,rows)로 되살리려면 셀 하나의 크기를 알아야 한다.
+    # pane의 화면 사각형을 이 값으로 나누면 셀 크기가 나온다.
+    try {
+        $state.Cols = [Console]::WindowWidth
+        $state.Rows = [Console]::WindowHeight
+    }
+    catch { }
 
     $last = Get-History -Count 1 -ErrorAction SilentlyContinue
     if ($last) { $state.Last = [string]$last.CommandLine }
@@ -4739,7 +4749,7 @@ function Get-WsTerminalLayout {
     $canFocus = [bool](Get-Command wt -ErrorAction SilentlyContinue)
     $tabsOut = @()
     $selfTab = $activeIndex
-    $selfPane = 0
+    $selfPaneId = 0
 
     for ($i = 0; $i -lt $items.Count; $i++) {
         $pattern = $items[$i].GetCurrentPattern($selection)
@@ -4764,24 +4774,81 @@ function Get-WsTerminalLayout {
             }
         }
         else {
-            for ($n = 0; $n -lt $terms.Count; $n++) {
-                # pane을 하나 활성화하면 탭 이름이 그 pane의 제목(표식)으로 바뀐다.
-                if ($canFocus) {
-                    & wt -w 0 focus-pane -t $n 2>$null
-                    Start-Sleep -Milliseconds 220
+            # pane을 하나씩 활성화하면 탭 이름이 그 pane의 제목(표식)으로 바뀐다.
+            # wt 실행이 늦어 아직 포커스가 안 옮겨졌을 수 있으므로, '새 사각형 + 새 표식'이 확인될 때까지 기다린 뒤 기록한다.
+            # (기다리지 않으면 직전 pane의 정보를 그대로 다시 읽어 여러 pane이 같은 상태로 저장된다)
+            $mapped = @{}
+            $usedMarks = @{}
+            $idByKey = @{}
+            $originKey = ''
+
+            $current = @($terms | Where-Object { $_.Current.HasKeyboardFocus })
+            if ($current.Count -eq 1) {
+                $rect = $current[0].Current.BoundingRectangle
+                $originKey = "{0:0},{1:0}" -f $rect.X, $rect.Y
+            }
+
+            # pane 번호는 만든 순서대로 붙고 중간에 빠질 수 있어, 필요한 만큼 번호를 넓혀가며 찾는다.
+            $paneId = 0
+            $guard = 0
+
+            while ($panes.Count -lt $terms.Count -and $guard -lt (($terms.Count * 3) + 6)) {
+                $guard++
+                $target = $paneId
+                $paneId++
+
+                if ($canFocus) { & wt -w 0 focus-pane -t $target 2>$null }
+
+                $deadline = (Get-Date).AddMilliseconds(1500)
+
+                while ((Get-Date) -lt $deadline) {
+                    Start-Sleep -Milliseconds 120
+
+                    $focused = @($terms | Where-Object { $_.Current.HasKeyboardFocus })
+                    if ($focused.Count -ne 1) { continue }
+
+                    $rect = $focused[0].Current.BoundingRectangle
+                    $key = "{0:0},{1:0}" -f $rect.X, $rect.Y
+                    if ($mapped.ContainsKey($key)) { continue }
+
+                    # 탭 제목이 아직 이전 pane의 표식이면 바뀔 때까지 더 기다린다.
+                    $name = [string]$items[$i].Current.Name
+                    if ($name -like 'ws:*' -and $usedMarks.ContainsKey($name)) { continue }
+
+                    $mapped[$key] = $true
+                    $idByKey[$key] = $target
+                    if ($name -like 'ws:*') { $usedMarks[$name] = $true }
+
+                    $panes += [pscustomobject]@{
+                        Name = $name
+                        X    = [double]$rect.X; Y = [double]$rect.Y
+                        W    = [double]$rect.Width; H = [double]$rect.Height
+                    }
+
+                    if ($name -eq $SelfMarker) { $selfTab = $i; $selfPaneId = $target }
+                    break
                 }
 
-                $focused = @($terms | Where-Object { $_.Current.HasKeyboardFocus })
-                $target = if ($focused.Count -eq 1) { $focused[0] } else { $terms[$n] }
-                $rect = $target.Current.BoundingRectangle
+                if (-not $canFocus) { break }
+            }
 
+            # 끝내 확인하지 못한 pane은 자리만 남긴다 (상태는 '응답 없음'으로 처리된다).
+            foreach ($term in $terms) {
+                $rect = $term.Current.BoundingRectangle
+                $key = "{0:0},{1:0}" -f $rect.X, $rect.Y
+                if ($mapped.ContainsKey($key)) { continue }
+
+                $mapped[$key] = $true
                 $panes += [pscustomobject]@{
-                    Name = [string]$items[$i].Current.Name
+                    Name = ''
                     X    = [double]$rect.X; Y = [double]$rect.Y
                     W    = [double]$rect.Width; H = [double]$rect.Height
                 }
+            }
 
-                if ($items[$i].Current.Name -eq $SelfMarker) { $selfTab = $i; $selfPane = $n }
+            # 이 탭에서 원래 보고 있던 pane으로 되돌린다.
+            if ($canFocus -and $originKey -and $idByKey.ContainsKey($originKey)) {
+                & wt -w 0 focus-pane -t $idByKey[$originKey] 2>$null
             }
         }
 
@@ -4792,10 +4859,124 @@ function Get-WsTerminalLayout {
     $items[$selfTab].GetCurrentPattern($selection).Select()
     if ($canFocus) {
         Start-Sleep -Milliseconds 150
-        & wt -w 0 focus-pane -t $selfPane 2>$null
+        & wt -w 0 focus-pane -t $selfPaneId 2>$null
     }
 
-    [pscustomobject]@{ ActiveIndex = $activeIndex; Tabs = $tabsOut }
+    # 창 위치·크기는 Win32 기준으로 읽는다 (--pos가 쓰는 기준과 같아야 복원 위치가 맞는다).
+    $windowRect = $null
+    $handle = $root.Current.NativeWindowHandle
+
+    if ($handle) { $windowRect = Get-WsWindowRect -Handle $handle }
+
+    if (-not $windowRect) {
+        $fallback = $root.Current.BoundingRectangle
+        $windowRect = [pscustomobject]@{
+            X = [int]$fallback.X; Y = [int]$fallback.Y
+            W = [int]$fallback.Width; H = [int]$fallback.Height
+        }
+    }
+
+    [pscustomobject]@{
+        ActiveIndex = $activeIndex
+        Tabs        = $tabsOut
+        Window      = $windowRect
+    }
+}
+
+function Initialize-WsWin32 {
+    # fnc-ignore
+    # 창 위치·크기를 읽고 맞추는 데 쓰는 Win32 함수를 한 번만 준비한다.
+    if (-not ('WsNative.Win32' -as [type])) {
+        Add-Type -Namespace WsNative -Name Win32 -MemberDefinition @'
+[StructLayout(LayoutKind.Sequential)]
+public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+
+[DllImport("user32.dll")]
+[return: MarshalAs(UnmanagedType.Bool)]
+public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+[DllImport("user32.dll")]
+[return: MarshalAs(UnmanagedType.Bool)]
+public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+
+[DllImport("user32.dll")]
+[return: MarshalAs(UnmanagedType.Bool)]
+public static extern bool ShowWindow(IntPtr hWnd, int cmd);
+'@
+    }
+}
+
+function Get-WsWindowRect {
+    # fnc-ignore
+    # 창의 위치·크기를 Win32 기준으로 읽는다. (UI 자동화 사각형은 그림자만큼 어긋나 복원 기준으로 못 쓴다)
+    param([int]$Handle)
+
+    Initialize-WsWin32
+
+    # 복원할 때 SetWindowPos로 그대로 맞출 것이므로 같은 기준(GetWindowRect)으로 읽는다.
+    $rect = New-Object WsNative.Win32+RECT
+
+    if (-not [WsNative.Win32]::GetWindowRect([IntPtr]$Handle, [ref]$rect)) { return $null }
+
+    [pscustomobject]@{
+        X = $rect.Left
+        Y = $rect.Top
+        W = ($rect.Right - $rect.Left)
+        H = ($rect.Bottom - $rect.Top)
+    }
+}
+
+function Get-WsTerminalWindowHandles {
+    # fnc-ignore
+    # 지금 떠 있는 Windows Terminal 창들의 핸들을 모은다. (복원 직후 새로 생긴 창을 찾는 데 쓴다)
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+
+    $cond = [System.Windows.Automation.PropertyCondition]::new(
+        [System.Windows.Automation.AutomationElement]::ClassNameProperty, 'CASCADIA_HOSTING_WINDOW_CLASS')
+
+    @([System.Windows.Automation.AutomationElement]::RootElement.FindAll(
+            [System.Windows.Automation.TreeScope]::Children, $cond) |
+        ForEach-Object { [int]$_.Current.NativeWindowHandle } | Where-Object { $_ })
+}
+
+function Set-WsWindowPlacement {
+    # fnc-ignore
+    # 복원한 창을 저장해 둔 픽셀 크기·위치에 정확히 맞춘다.
+    # (wt --size는 글자 수 단위라 분할 구분선·여백 때문에 저장/복원을 되풀이하면 창이 조금씩 줄어든다)
+    param([int]$Handle, [object]$Window)
+
+    Initialize-WsWin32
+
+    if ($Window.Maximized) {
+        # 3 = SW_MAXIMIZE
+        [void][WsNative.Win32]::ShowWindow([IntPtr]$Handle, 3)
+        return
+    }
+
+    $width = [int]$Window.W
+    $height = [int]$Window.H
+    if ($width -le 0 -or $height -le 0) { return }
+
+    # 0x0004 SWP_NOZORDER | 0x0010 SWP_NOACTIVATE
+    [void][WsNative.Win32]::SetWindowPos([IntPtr]$Handle, [IntPtr]::Zero, [int]$Window.X, [int]$Window.Y, $width, $height, 0x0014)
+}
+
+function Test-WsMaximized {
+    # fnc-ignore
+    # 창이 모니터 작업 영역을 거의 꽉 채우면 최대화 상태로 본다. (복원할 때 --maximized로 연다)
+    param([object]$Rect)
+
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+
+        $center = [System.Drawing.Point]::new([int]($Rect.X + ($Rect.W / 2)), [int]($Rect.Y + ($Rect.H / 2)))
+        $area = [System.Windows.Forms.Screen]::FromPoint($center).WorkingArea
+
+        return (($Rect.W -ge ($area.Width - 24)) -and ($Rect.H -ge ($area.Height - 24)))
+    }
+    catch { return $false }
 }
 
 function ConvertTo-WsPaneTree {
@@ -4849,6 +5030,34 @@ function ConvertTo-WsPaneTree {
         First  = (ConvertTo-WsPaneTree -Panes $list[0..($half - 1)])
         Second = (ConvertTo-WsPaneTree -Panes $list[$half..($list.Count - 1)])
     }
+}
+
+function Get-WsTreeCells {
+    # fnc-ignore
+    # 분할 트리 전체가 몇 글자인지 센다. 좌우 분할이면 가로를 더하고 구분선 한 칸을 넣는다.
+    # (픽셀로 환산하면 반올림 때문에 한 칸씩 어긋나므로, 각 pane이 보고한 글자 수로 직접 센다)
+    param([object]$Node)
+
+    if (-not $Node) { return $null }
+
+    if ($Node.Kind -eq 'pane') {
+        $cols = [int]$Node.Pane.Cols
+        $rows = [int]$Node.Pane.Rows
+
+        if ($cols -le 0 -or $rows -le 0) { return $null }
+        return [pscustomobject]@{ Cols = $cols; Rows = $rows }
+    }
+
+    $first = Get-WsTreeCells -Node $Node.First
+    $second = Get-WsTreeCells -Node $Node.Second
+
+    if (-not $first -or -not $second) { return $null }
+
+    if ($Node.Dir -eq 'V') {
+        return [pscustomobject]@{ Cols = ($first.Cols + $second.Cols + 1); Rows = [Math]::Max($first.Rows, $second.Rows) }
+    }
+
+    [pscustomobject]@{ Cols = [Math]::Max($first.Cols, $second.Cols); Rows = ($first.Rows + $second.Rows + 1) }
 }
 
 function Get-WsLeafPanes {
@@ -4972,12 +5181,25 @@ function Save-WsSnapshot {
 
     $tabs = @()
     $missing = @()
+    $usedStates = @{}
     $paneCount = 0
+    $cellW = 0.0
+    $cellH = 0.0
+    $contentW = 0.0
+    $contentH = 0.0
 
     foreach ($tab in $layout.Tabs) {
         # 저장을 실행 중인 이 pane은 스냅샷에서 뺀다 (복원할 때 다시 만들 이유가 없다).
         $panes = @($tab.Panes | Where-Object { $_.Name -ne $selfMarker })
         if ($panes.Count -eq 0) { continue }
+
+        # 탭 내용 영역(= 터미널 영역)은 모든 탭이 같다. 창 크기를 글자 수로 환산할 때 쓴다.
+        if ($contentW -le 0) {
+            $contentW = (($tab.Panes | ForEach-Object { $_.X + $_.W } | Measure-Object -Maximum).Maximum -
+                ($tab.Panes | ForEach-Object { $_.X } | Measure-Object -Minimum).Minimum)
+            $contentH = (($tab.Panes | ForEach-Object { $_.Y + $_.H } | Measure-Object -Maximum).Maximum -
+                ($tab.Panes | ForEach-Object { $_.Y } | Measure-Object -Minimum).Minimum)
+        }
 
         $tree = ConvertTo-WsPaneTree -Panes $panes
         $leaves = @(Get-WsLeafPanes -Node $tree)
@@ -4986,11 +5208,24 @@ function Save-WsSnapshot {
 
         foreach ($leaf in $leaves) {
             $paneCount++
-            $state = $states[$leaf.Name]
+
+            # 한 pane의 응답이 두 자리에 들어가지 않게, 이미 쓴 응답은 다시 쓰지 않는다.
+            $state = $null
+
+            if ($leaf.Name -and $states.ContainsKey($leaf.Name) -and -not $usedStates.ContainsKey($leaf.Name)) {
+                $state = $states[$leaf.Name]
+                $usedStates[$leaf.Name] = $true
+            }
+
+            # 셀 하나의 크기(px)는 pane 사각형 ÷ 그 pane의 글자 수로 구한다. 창 크기 복원에 쓴다.
+            if ($state -and $cellW -le 0 -and [int]$state.Cols -gt 0 -and [int]$state.Rows -gt 0) {
+                $cellW = $leaf.W / [int]$state.Cols
+                $cellH = $leaf.H / [int]$state.Rows
+            }
 
             if ($state) {
                 Add-Member -InputObject $leaf -NotePropertyName Responded -NotePropertyValue $true -Force
-                foreach ($nm in 'Pid', 'Title', 'TabColor', 'Cwd', 'Last', 'SV', 'SVID', 'SVIP', 'SVPORT', 'SVDIR', 'DST', 'DSTID', 'DSTIP', 'DSTPORT') {
+                foreach ($nm in 'Pid', 'Title', 'TabColor', 'Cwd', 'Last', 'Cols', 'Rows', 'SV', 'SVID', 'SVIP', 'SVPORT', 'SVDIR', 'DST', 'DSTID', 'DSTIP', 'DSTPORT') {
                     Add-Member -InputObject $leaf -NotePropertyName $nm -NotePropertyValue ([string]$state.$nm) -Force
                 }
                 if (-not $title -and $state.Title) { $title = [string]$state.Title }
@@ -5035,11 +5270,41 @@ function Save-WsSnapshot {
         }
     }
 
+    # 창 크기·위치도 함께 남긴다. 크기는 글자 수(cols,rows)로 바꿔 둬야 복원할 때 wt가 그대로 연다.
+    $window = $null
+
+    if ($layout.Window) {
+        # 글자 수는 각 pane이 보고한 값을 트리대로 더해 정확히 센다. 못 세면(응답 없는 pane) 픽셀로 어림한다.
+        $cols = 0
+        $rows = 0
+
+        foreach ($saved in $tabs) {
+            $cells = Get-WsTreeCells -Node $saved.Layout
+            if (-not $cells) { continue }
+            if ($cells.Cols -gt $cols) { $cols = [int]$cells.Cols }
+            if ($cells.Rows -gt $rows) { $rows = [int]$cells.Rows }
+        }
+
+        if ($cols -le 0 -and $cellW -gt 0 -and $contentW -gt 0) { $cols = [int][Math]::Round($contentW / $cellW) }
+        if ($rows -le 0 -and $cellH -gt 0 -and $contentH -gt 0) { $rows = [int][Math]::Round($contentH / $cellH) }
+
+        $window = [pscustomobject]@{
+            X         = [int][Math]::Round($layout.Window.X)
+            Y         = [int][Math]::Round($layout.Window.Y)
+            W         = [int][Math]::Round($layout.Window.W)
+            H         = [int][Math]::Round($layout.Window.H)
+            Cols      = $cols
+            Rows      = $rows
+            Maximized = [bool](Test-WsMaximized -Rect $layout.Window)
+        }
+    }
+
     $snapshot = [pscustomobject]@{
         Version = 1
         Name    = $Name
         Memo    = [string]$Memo
         SavedAt = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+        Window  = $window
         Tabs    = $tabs
     }
 
@@ -5108,6 +5373,13 @@ function Show-WsSnapshot {
         $sub, $head, $snapshot.Name, $snapshot.Tabs.Count, $panes, $snapshot.SavedAt, "$esc[0m")
 
     if ($snapshot.Memo) { Write-Host ("  {0}메모: {1}$esc[0m" -f $sub, $snapshot.Memo) }
+
+    if ($snapshot.Window) {
+        $geo = if ($snapshot.Window.Maximized) { '최대화' }
+            else { "{0}x{1} 글자 · 위치 {2},{3}" -f $snapshot.Window.Cols, $snapshot.Window.Rows, $snapshot.Window.X, $snapshot.Window.Y }
+
+        Write-Host ("  {0}창: {1}$esc[0m" -f $sub, $geo)
+    }
 
     for ($i = 0; $i -lt $snapshot.Tabs.Count; $i++) {
         $tab = $snapshot.Tabs[$i]
@@ -5250,13 +5522,49 @@ function Restore-WsSnapshot {
     Write-Host ("복원: [{0}]  탭 {1} · pane {2}  ->  {3}" -f
         $snapshot.Name, $snapshot.Tabs.Count, $panes, $(if ($Here) { '현재 창에 탭 추가' } else { '새 창' })) -ForegroundColor Green
 
+    # 새 창으로 열 때는 저장해 둔 크기로 먼저 띄우고(--size), 연 뒤에 픽셀 단위로 정확히 맞춘다.
+    # (창 옵션은 첫 하위 명령보다 앞에 와야 한다)
+    $prefix = @()
+    $restoreWindow = (-not $Here -and $snapshot.Window)
+    $before = @()
+
+    if ($restoreWindow) {
+        if ($snapshot.Window.Maximized) {
+            $prefix += '--maximized'
+        }
+        elseif ([int]$snapshot.Window.Cols -gt 0 -and [int]$snapshot.Window.Rows -gt 0) {
+            $prefix += @('--size', ("{0},{1}" -f [int]$snapshot.Window.Cols, [int]$snapshot.Window.Rows))
+            $prefix += @('--pos', ("{0},{1}" -f [int]$snapshot.Window.X, [int]$snapshot.Window.Y))
+        }
+
+        try { $before = @(Get-WsTerminalWindowHandles) } catch { $before = @() }
+    }
+
     # 인자는 splat으로 넘긴다 - 배열을 그대로 넘기면 한 덩어리로 전달될 수 있다 (dup과 같은 방식).
-    $wtArgs = @($context.Args)
+    $wtArgs = @($prefix) + @($context.Args)
     & wt -w $window @wtArgs
 
     if ($LASTEXITCODE -ne 0) {
         $context.Scripts | ForEach-Object { Remove-Item -LiteralPath $_ -Force -ErrorAction SilentlyContinue }
         Write-Error ("복원에 실패했습니다 (exit code: {0})" -f $LASTEXITCODE)
+        return
+    }
+
+    if (-not $restoreWindow) { return }
+
+    # 새로 열린 창을 찾아 저장해 둔 크기·위치에 그대로 맞춘다.
+    $deadline = (Get-Date).AddSeconds(6)
+
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 300
+
+        $new = @(Get-WsTerminalWindowHandles | Where-Object { $before -notcontains $_ })
+        if ($new.Count -eq 0) { continue }
+
+        try { Set-WsWindowPlacement -Handle $new[0] -Window $snapshot.Window }
+        catch { Write-Warning ("창 크기·위치를 맞추지 못했습니다: {0}" -f $_.Exception.Message) }
+
+        break
     }
 }
 
