@@ -2035,9 +2035,9 @@ function pt {
 }
 
 function rb {
-    # 선택된 SV를 재부팅하고 다운 -> 복구까지 한 줄에서 지켜본다. (-y 확인 생략, -c 복구 후 접속, -w 단계별 최대 대기(분), 종료 Ctrl+C)
+    # 선택된 SV가 재부팅으로 내려갔다 올라오는 과정을 한 줄에서 지켜본다. 재부팅 명령은 보내지 않는다.
+    # (원격 셸에서 reboot을 친 뒤 빠져나와 실행한다. -c 복구되면 접속, -w 단계별 최대 대기(분), -i 확인 간격(초), 종료 Ctrl+C)
     param(
-        [Alias('y')][switch]$Yes,
         [Alias('c')][switch]$Connect,
         [Alias('w')][double]$Wait = 10,
         [Alias('i')][int]$Interval = 2
@@ -2055,52 +2055,21 @@ function rb {
     $target = [string]$global:SVIP
 
     Write-Host ("{0}reboot:$esc[0m {1}{2}$esc[0m  {0}({3}:{4} · {5})$esc[0m" -f $sub, $head, $global:SV, $target, $global:SVPORT, $global:SVID)
+    Write-Host ("  {0}다운 확인 -> 응답 재개 -> ssh 포트 -> 로그인 순서로 기록합니다. (Ctrl+C 종료){1}" -f $sub, $reset)
 
-    # 지금 응답하지 않는 서버에 재부팅 명령을 보낼 수는 없으므로 먼저 확인한다.
-    $alive = Test-PingOnce -Target $target -TimeoutMs 1000
-
-    if (-not $alive.Ok) {
-        Write-Host ("{0}가 지금 ping에 응답하지 않습니다. 이미 내려간 상태라면 p로 복구만 지켜보세요." -f $target) -ForegroundColor Yellow
-        return
-    }
-
-    # 계정이 root가 아니면 sudo가 필요하다. 비밀번호를 묻는 sudo는 여기서 처리하지 않는다(-n).
-    $who = Invoke-SvSsh -Command 'id -u'
-
-    if ($who.ExitCode -ne 0) {
-        Write-Error ("ssh 접속을 확인하지 못했습니다 (exit code: {0}). auth로 키 인증을 먼저 설정해 주세요." -f $who.ExitCode)
-        return
-    }
-
-    $isRoot = ([string](@($who.Lines)[0])).Trim() -eq '0'
-    $rebootCmd = if ($isRoot) { 'shutdown -r now || reboot' } else { 'sudo -n shutdown -r now || sudo -n reboot' }
-
-    if (-not $Yes) {
-        Write-Host ("  {0} ({1}) 를 지금 재부팅합니다." -f $global:SV, $target) -ForegroundColor Yellow
-        $answer = Read-Host "  계속할까요? (y/N)"
-
-        if ($answer -notmatch '^(y|yes)$') {
-            Write-Host "  취소했습니다." -ForegroundColor DarkGray
-            return
-        }
-    }
-
+    # 분 단위지만 0.5처럼 소수도 받는다 (짧게 확인하거나 시험할 때 쓴다).
+    $limit = [TimeSpan]::FromMinutes([Math]::Max(0.01, $Wait))
     $startedAt = Get-Date
-    Write-Host ("[{0:HH:mm:ss}] 재부팅 명령 전송  ·  {1}" -f $startedAt, $rebootCmd) -ForegroundColor Cyan
+    $downAt = $null
+    $upAt = $null
+    $readyAt = $null
 
-    $sent = Invoke-SvSsh -Command $rebootCmd -IncludeError
-    $sentText = (@($sent.Lines) | ForEach-Object { [string]$_ }) -join ' '
+    # 이미 내려간 뒤에 실행했다면 다운 확인은 건너뛰고 복구만 기다린다.
+    $first = Test-PingOnce -Target $target -TimeoutMs 1000
 
-    # 재부팅이 시작되면 연결이 끊겨 255가 돌아온다. 그래서 0과 255는 '전달됨'으로 본다.
-    if ($sent.ExitCode -ne 0 -and $sent.ExitCode -ne 255) {
-        if ($sentText -match 'password|sudo:') {
-            Write-Error ("sudo가 비밀번호를 요구합니다. NOPASSWD 설정이 없으면 c로 접속해 직접 재부팅해 주세요. {0}" -f $sentText)
-        }
-        else {
-            Write-Error ("재부팅 명령이 거절되었습니다 (exit code: {0}) {1}" -f $sent.ExitCode, $sentText)
-        }
-
-        return
+    if (-not $first.Ok) {
+        $downAt = $startedAt
+        Write-Host ("[{0:HH:mm:ss}] ✖ 이미 응답 없음 - 복구만 지켜봅니다." -f $startedAt) -ForegroundColor Red
     }
 
     # 갱신 줄은 [Console]::Write로 직접 쓰는데, 콘솔 기본 인코딩(CP949)에서는 ✖ 같은 문자가 ?로 깨진다.
@@ -2108,42 +2077,38 @@ function rb {
     $prevEncoding = [Console]::OutputEncoding
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-    # 분 단위지만 0.5처럼 소수도 받는다 (짧게 확인하거나 시험할 때 쓴다).
-    $limit = [TimeSpan]::FromMinutes([Math]::Max(0.01, $Wait))
-    $downAt = $null
-    $upAt = $null
-    $readyAt = $null
-
     try {
         # 1단계: 다운 확인 - 순간적인 유실과 구분하려고 연속 2회 무응답일 때 다운으로 본다.
-        $missed = 0
-        $phaseStart = Get-Date
+        if (-not $downAt) {
+            $missed = 0
+            $phaseStart = Get-Date
 
-        while ($true) {
-            $result = Test-PingOnce -Target $target -TimeoutMs 1000
-            $now = Get-Date
+            while ($true) {
+                $result = Test-PingOnce -Target $target -TimeoutMs 1000
+                $now = Get-Date
 
-            if ($result.Ok) { $missed = 0 }
-            else {
-                $missed++
-                if ($missed -ge 2) { $downAt = $now; break }
+                if ($result.Ok) { $missed = 0 }
+                else {
+                    $missed++
+                    if ($missed -ge 2) { $downAt = $now; break }
+                }
+
+                if (($now - $phaseStart) -gt $limit) { break }
+
+                $line = if ($result.Ok) { "{0}● 응답 {1,4}ms{2}" -f $green, $result.Ms, $reset } else { "{0}✖ 무응답 {1}회{2}" -f $red, $missed, $reset }
+                [Console]::Write(("`r$esc[K {0}  {1}· 다운 대기 · {2} 경과{3}" -f $line, $gray, (Format-PingDuration ($now - $phaseStart).TotalSeconds), $reset))
+                Start-Sleep -Seconds $Interval
             }
 
-            if (($now - $phaseStart) -gt $limit) { break }
+            [Console]::Write("`r$esc[K")
 
-            $line = if ($result.Ok) { "{0}● 응답 {1,4}ms{2}" -f $green, $result.Ms, $reset } else { "{0}✖ 무응답 {1}회{2}" -f $red, $missed, $reset }
-            [Console]::Write(("`r$esc[K {0}  {1}· 다운 대기 · {2} 경과{3}" -f $line, $gray, (Format-PingDuration ($now - $phaseStart).TotalSeconds), $reset))
-            Start-Sleep -Seconds $Interval
+            if (-not $downAt) {
+                Write-Host ("[{0:HH:mm:ss}] 다운을 확인하지 못했습니다 ({1} 동안 계속 응답). 재부팅이 아직 시작되지 않았을 수 있습니다." -f (Get-Date), (Format-PingDuration $limit.TotalSeconds)) -ForegroundColor Yellow
+                return
+            }
+
+            Write-Host ("[{0:HH:mm:ss}] ✖ 다운 확인  (감시 시작 후 {1})" -f $downAt, (Format-PingDuration ($downAt - $startedAt).TotalSeconds)) -ForegroundColor Red
         }
-
-        [Console]::Write("`r$esc[K")
-
-        if (-not $downAt) {
-            Write-Host ("[{0:HH:mm:ss}] 다운을 확인하지 못했습니다 ({1} 동안 계속 응답). 재부팅이 시작되지 않았을 수 있습니다." -f (Get-Date), (Format-PingDuration $limit.TotalSeconds)) -ForegroundColor Yellow
-            return
-        }
-
-        Write-Host ("[{0:HH:mm:ss}] ✖ 다운 확인  (명령 후 {1})" -f $downAt, (Format-PingDuration ($downAt - $startedAt).TotalSeconds)) -ForegroundColor Red
 
         # 2단계: 응답 재개 대기
         $phaseStart = Get-Date
@@ -4015,7 +3980,7 @@ function ssh-help {
     Add-Title "[ 전체 흐름 ]"
     Add-Plain "  $esc[92mss$esc[0m 서버 선택  ->  $esc[92mc$esc[0m 접속 / $esc[92msw$esc[0m 원격 경로 고정  ->  $esc[92mrl$esc[0m 목록 확인 / $esc[92mup dn$esc[0m 파일 전송"
     Add-Plain "  서버간 전송은 $esc[92msd$esc[0m 로 대상까지 고른 뒤 $esc[92mrr$esc[0m."
-    Add-Plain "  상태 점검은 $esc[92mp$esc[0m ping -> $esc[92mpt$esc[0m 포트 -> $esc[92mrs$esc[0m 요약, 로그는 $esc[92mrt$esc[0m, 재부팅은 $esc[92mrb$esc[0m."
+    Add-Plain "  상태 점검은 $esc[92mp$esc[0m ping -> $esc[92mpt$esc[0m 포트 -> $esc[92mrs$esc[0m 요약, 로그는 $esc[92mrt$esc[0m, 재부팅 감시는 $esc[92mrb$esc[0m."
     Add-Plain ""
     Add-Plain "  선택 상태는 프롬프트 윗줄에 표시된다 - SV | ID | IP | PORT | DIR (DST는 아래 줄)."
 
@@ -4055,10 +4020,10 @@ function ssh-help {
     Add-Note "ping은 되는데 접속이 안 될 때 sshd가 떴는지 여기서 먼저 확인한다"
     Add-Cmd "rs"               "SV 상태 요약 - 가동시간·부하·메모리·디스크·상위 프로세스·접속자"
     Add-Note "/proc과 기본 명령만 쓰므로 갓 설치한 서버에서도 그대로 동작한다 (-n 프로세스 줄수)"
-    Add-Cmd "rb"               "SV를 재부팅하고 다운 -> 복구까지 한 줄에서 지켜본다"
+    Add-Cmd "rb"               "재부팅 감시 - SV가 내려갔다 올라오는 과정을 한 줄에서 지켜본다"
     Add-Note "다운 확인 -> 응답 재개 -> ssh 포트 열림 -> 로그인 확인 순서로 단계마다 기록을 남긴다"
-    Add-Note "실행 전 y/N로 한 번 확인한다 (-y 확인 생략, -c 복구되면 바로 접속)"
-    Add-Note "root가 아니면 sudo -n을 쓰므로 비밀번호 없는 sudo가 필요하다. -w 단계별 최대 대기(분, 기본 10)"
+    Add-Note "원격 셸에서 reboot을 친 뒤 빠져나와 실행한다 - 재부팅 명령을 보내지는 않는다"
+    Add-Note "이미 내려간 뒤에 실행하면 복구만 지켜본다. -c 복구되면 바로 접속, -w 단계별 최대 대기(분, 기본 10)"
     Add-Cmd "d [-r|-l|-u|-d|-g]" "현재 세션을 화면 분할로 복제 (= dup, 기본 -r 우측)"
     Add-Note "-g: 2x2 4분할 (세로 분할 후 양쪽을 가로 분할, 포커스는 원래 pane)"
     Add-Note "새 pane이 SV/DST/SVDIR 선택 상태를 그대로 이어받는다"
@@ -4135,7 +4100,8 @@ function ssh-help {
 
     Add-Section "재부팅 점검"
     Add-Plain "    ss myhost           # 서버 선택"
-    Add-Plain "    rb                  # 확인 후 재부팅 - 다운/복구를 한 줄로 지켜본다"
+    Add-Plain "    c                   # 접속해서 reboot 실행 -> 연결이 끊기면 빠져나온다"
+    Add-Plain "    rb                  # 다운 -> 복구를 한 줄로 지켜본다"
     Add-Plain "    pt                  # 서비스 포트까지 확인"
     Add-Plain "    rs                  # 올라온 서버 상태 요약"
     Add-Section "장애 로그 확인"
@@ -4148,7 +4114,7 @@ function ssh-help {
     Add-Cmd "호스트 키 경고"     "REMOTE HOST IDENTIFICATION HAS CHANGED - auth가 자동 정리한다"
     Add-Note "수동으로 지우려면 del-host <IP> (known_hosts 자동 백업 후 해당 항목 삭제)"
     Add-Cmd "ping 되는데 접속 불가" "pt로 포트 확인 - sshd 기동 전이면 잠시 후 다시 시도"
-    Add-Cmd "rb가 거절될 때"     "sudo가 비밀번호를 요구하는 경우 - c로 접속해 직접 재부팅"
+    Add-Cmd "rb가 안 끝날 때"    "다운을 못 잡으면 재부팅 전이거나 ping이 막힌 경우 - pt로 포트 확인"
     Add-Cmd "전체 명령 목록"     "fnc (함수 목록) / fnc-alias (alias 목록)"
 
     Add-Plain ""
@@ -5423,14 +5389,8 @@ function New-WsPaneInitScript {
         $lines.Add('Write-TabColorSequence $env:OMP_TABCOLOR')
     }
 
-    if ($Pane.Last) {
-        # 실행하지는 않는다 - 히스토리에만 넣어 두면 위 화살표 한 번으로 이어서 할 수 있다.
-        $lines.Add(("`$ws_last = '{0}'" -f ([string]$Pane.Last -replace "'", "''")))
-        $lines.Add('try { Import-Module PSReadLine -ErrorAction Stop; [Microsoft.PowerShell.PSConsoleReadLine]::AddToHistory($ws_last) } catch { }')
-        $lines.Add('Write-Host ("ws: 실행 중이던 명령 -> {0}   (위 화살표로 불러오기)" -f $ws_last) -ForegroundColor DarkCyan')
-        $lines.Add('Remove-Variable ws_last -ErrorAction SilentlyContinue')
-    }
-
+    # 실행 중이던 명령은 스냅샷(ws show)에만 남긴다. 새 세션의 히스토리에 밀어 넣는 방법은
+    # 프로필이 올라오기 전이라 동작하지 않아서 안내도 하지 않는다.
     $lines.Add(("Write-Host 'ws: 작업공간 [{0}] 복원' -ForegroundColor DarkCyan" -f ($Snapshot -replace "'", "''")))
     $lines.Add('Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue')
 
