@@ -2366,6 +2366,207 @@ function rsa-pubkey # show ssh rsa-public key
     cat $env:HOMEPATH/.ssh/id_rsa.pub
 }
 
+function Get-KeepTitleSnippet {
+    # fnc-ignore
+    # 원격 ~/.bashrc 끝에 붙일 블록. (따옴표가 많아 작은따옴표 here-string으로 그대로 들고 있는다)
+    $snippet = @'
+# >>> pws keep-title >>>
+# Windows Terminal 탭 이름이 원격 셸 프롬프트에 덮이지 않게 한다. (windows: keep-title)
+# 끄려면 아래 PWS_KEEP_TITLE=1 줄을 주석 처리하고 다시 접속한다. (블록 제거: keep-title -r)
+PWS_KEEP_TITLE=1
+if [ -n "${PWS_KEEP_TITLE:-}" ] && [ -n "${PS1:-}" ]; then
+    # 1) PS1에 박힌 제목 설정 제거: \[\e]0;...\] 또는 \[\033]0;...\]
+    #    제목 문자열 안에 \u \h \w 같은 백슬래시가 들어가므로 닫는 ] 까지 통째로 지운다.
+    _pws_ps1=$(printf '%s' "$PS1" | sed -e 's/\\\[\\e\]0;[^]]*\]//g' -e 's/\\\[\\033\]0;[^]]*\]//g')
+
+    # 프롬프트가 통째로 비면 위험하므로 남은 내용이 있을 때만 바꾼다.
+    if [ -n "$_pws_ps1" ]; then PS1=$_pws_ps1; fi
+    unset _pws_ps1
+
+    # 2) PROMPT_COMMAND가 제목을 쓰면 그 부분만 빼고 나머지 일은 남긴다.
+    case "${PROMPT_COMMAND:-}" in
+        *']0;'*)
+            PROMPT_COMMAND=$(printf '%s' "$PROMPT_COMMAND" | sed -E 's/[^;]*\]0;[^;]*(;|$)//g')
+            ;;
+    esac
+fi
+# <<< pws keep-title <<<
+'@
+
+    $snippet -replace "`r`n", "`n"
+}
+
+function Invoke-RemoteBashScript {
+    # fnc-ignore
+    # 원격에서 bash 스크립트를 실행한다. (시험 때 이 함수만 바꿔 끼운다)
+    # 스크립트는 base64로 실어 보낸다 - 따옴표·줄바꿈이 중간에 깨지지 않는다.
+    param(
+        [string]$Destination,
+        [string[]]$PortArgs = @(),
+        [string]$Script
+    )
+
+    $body = ($Script -replace "`r`n", "`n")
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($body))
+    $remote = "echo {0} | base64 -d | bash -s" -f $encoded
+
+    $prevEncoding = [Console]::OutputEncoding
+
+    try {
+        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+        $lines = @(& ssh -o ConnectTimeout=5 -o RemoteCommand=none -o RequestTTY=no @PortArgs $Destination $remote 2>&1)
+        return @{ Lines = @($lines | ForEach-Object { [string]$_ }); ExitCode = $LASTEXITCODE }
+    }
+    finally {
+        [Console]::OutputEncoding = $prevEncoding
+    }
+}
+
+function Get-KeepTitleResult {
+    # fnc-ignore
+    # 원격 스크립트가 남긴 'KEY=값' 줄에서 값을 꺼낸다.
+    param([object]$Response, [string]$Key)
+
+    foreach ($line in @($Response.Lines)) {
+        if ($line -match ("^{0}=(.*)$" -f [regex]::Escape($Key))) { return $Matches[1].Trim() }
+    }
+
+    ''
+}
+
+function keep-title {
+    # 원격 서버의 ~/.bashrc에 '탭 제목 덮어쓰기 방지' 블록을 넣는다. (bash 전용, 서버마다 한 번, -r 제거, -h 사용법)
+    param(
+        [Parameter(Position = 0)]
+        [string]$Target,
+
+        [Parameter(Position = 1)]
+        [int]$Port = 0,
+
+        [Alias('r')]
+        [switch]$Remove,
+
+        [Alias('h')]
+        [switch]$Help
+    )
+
+    if ($Help -or $Target -match '^(--?help|[-/]\?|/h)$') {
+        Write-Host "사용법: keep-title [대상] [포트]      원격 ~/.bashrc에 탭 제목 보호 블록을 넣는다" -ForegroundColor Yellow
+        Write-Host "        keep-title -r [대상] [포트]   넣었던 블록을 제거한다" -ForegroundColor Yellow
+        Write-Host "  대상을 생략하면 선택된 SV. 접속 계정의 bash 프롬프트가 탭 이름을 덮어쓰지 않게 한다." -ForegroundColor DarkCyan
+        Write-Host "  bash 전용이며, 원격 ~/.bashrc는 고치기 전에 자동으로 백업한다." -ForegroundColor DarkCyan
+        return
+    }
+
+    if (-not (Get-Command ssh -ErrorAction SilentlyContinue)) {
+        Write-Error "ssh 명령을 찾지 못했습니다. OpenSSH Client가 설치되어 있어야 합니다."
+        return
+    }
+
+    # 접속 대상: 인자가 있으면 인자를, 없으면 ss로 선택한 $SV를 쓴다. (auth와 같은 규칙)
+    $portArgs = @()
+
+    if ($Target) {
+        $dest = $Target
+        if ($Port -gt 0) { $portArgs = @('-p', $Port) }
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace([string]$global:SV)) {
+        $dest = [string]$global:SV
+        if ($Port -gt 0) { $portArgs = @('-p', $Port) }
+        elseif ($global:SVPORT) { $portArgs = @('-p', $global:SVPORT) }
+    }
+    else {
+        Write-Host "사용법: keep-title [대상] [포트]   (대상을 생략하면 선택된 SV - 먼저 ss로 서버 선택)" -ForegroundColor Yellow
+        return
+    }
+
+    $esc = [char]27
+    $head = "$esc[1;38;2;231;111;81m"
+    $sub = "$esc[38;5;245m"
+
+    Write-Host ("{0}keep-title:$esc[0m {1}{2}$esc[0m  {0}({3})$esc[0m" -f
+        $sub, $head, $dest, $(if ($Remove) { '블록 제거' } else { '블록 추가' }))
+
+    if ($Remove) {
+        $script = @'
+file="$HOME/.bashrc"
+if [ ! -f "$file" ]; then echo "RESULT=NOFILE"; exit 0; fi
+if ! grep -q "pws keep-title" "$file"; then echo "RESULT=NOTFOUND"; exit 0; fi
+backup="$file.bak-pws-$(date +%Y%m%d-%H%M%S)"
+cp "$file" "$backup"
+sed -i '/# >>> pws keep-title >>>/,/# <<< pws keep-title <<</d' "$file"
+echo "RESULT=REMOVED"
+echo "BACKUP=$backup"
+'@
+    }
+    else {
+        $script = @'
+file="$HOME/.bashrc"
+if [ ! -f "$file" ]; then : > "$file"; fi
+if grep -q "pws keep-title" "$file"; then echo "RESULT=ALREADY"; exit 0; fi
+backup="$file.bak-pws-$(date +%Y%m%d-%H%M%S)"
+cp "$file" "$backup"
+cat >> "$file" <<'PWSKEEPTITLEEOF'
+__SNIPPET__
+PWSKEEPTITLEEOF
+echo "RESULT=INSTALLED"
+echo "BACKUP=$backup"
+'@
+        # -replace는 정규식 치환이라 스니펫 안의 ${...}를 그룹 참조로 해석한다. 문자 그대로 바꿔 넣는다.
+        $script = $script.Replace('__SNIPPET__', (Get-KeepTitleSnippet).TrimEnd("`n"))
+    }
+
+    $response = Invoke-RemoteBashScript -Destination $dest -PortArgs $portArgs -Script $script
+
+    if ($response.ExitCode -ne 0) {
+        Write-Error ("원격 설정에 실패했습니다 (exit code: {0}) {1}" -f $response.ExitCode, (@($response.Lines) -join ' '))
+        return
+    }
+
+    $result = Get-KeepTitleResult -Response $response -Key 'RESULT'
+    $backup = Get-KeepTitleResult -Response $response -Key 'BACKUP'
+
+    switch ($result) {
+        'INSTALLED' { Write-Host ("  ~/.bashrc에 추가했습니다.  {0}(백업: {1})$esc[0m" -f $sub, $backup) -ForegroundColor Green }
+        'ALREADY' { Write-Host "  이미 적용되어 있습니다." -ForegroundColor Green }
+        'REMOVED' { Write-Host ("  블록을 제거했습니다.  {0}(백업: {1})$esc[0m" -f $sub, $backup) -ForegroundColor Green }
+        'NOTFOUND' { Write-Host "  적용된 블록이 없습니다." -ForegroundColor Yellow }
+        'NOFILE' { Write-Host "  원격에 ~/.bashrc가 없습니다." -ForegroundColor Yellow }
+        default {
+            Write-Error ("원격 응답을 알 수 없습니다: {0}" -f (@($response.Lines) -join ' '))
+            return
+        }
+    }
+
+    # 실제로 제목 설정이 사라졌는지 새 대화형 셸에서 확인한다.
+    $verify = @'
+out=$(bash -ic 'printf "%s|%s" "$PS1" "$PROMPT_COMMAND"' 2>/dev/null)
+case "$out" in
+    *']0;'*) echo "RESULT=TITLE_SET" ;;
+    *) echo "RESULT=TITLE_CLEAN" ;;
+esac
+'@
+
+    $checked = Invoke-RemoteBashScript -Destination $dest -PortArgs $portArgs -Script $verify
+    $state = Get-KeepTitleResult -Response $checked -Key 'RESULT'
+
+    if ($Remove) {
+        if ($state -eq 'TITLE_SET') { Write-Host "  확인: 프롬프트가 다시 탭 이름을 바꿉니다 (원래 동작)." -ForegroundColor DarkCyan }
+        return
+    }
+
+    if ($state -eq 'TITLE_CLEAN') {
+        Write-Host "  확인: 새 셸에서 제목 설정이 사라졌습니다. 다음 접속부터 탭 이름이 유지됩니다." -ForegroundColor Green
+    }
+    elseif ($state -eq 'TITLE_SET') {
+        Write-Host "  확인: 아직 제목을 설정합니다." -ForegroundColor Yellow
+        Write-Host "  로그인 셸이 ~/.bashrc를 읽지 않거나(~/.bash_profile 확인), /etc 쪽 설정이 더 늦게 실행되는 경우입니다." -ForegroundColor DarkCyan
+    }
+    else {
+        Write-Host "  확인 단계를 건너뛰었습니다 (원격에서 대화형 bash를 실행하지 못했습니다)." -ForegroundColor DarkCyan
+    }
+}
+
 function del-host {
     # known_hosts에서 지정한 IP 항목을 삭제한다(자동 백업 생성).
     param(
@@ -4010,6 +4211,9 @@ function ssh-help {
     Add-Note "인자 없이 auth = 선택된 SV 대상. 사용법은 auth -h"
     Add-Note "예: auth user@10.0.0.5 2222  /  auth myhost (config 별칭은 포트 자동)"
     Add-Note "IP 재사용 등으로 호스트 키가 바뀐 서버는 known_hosts 항목을 자동 정리한 뒤 등록한다"
+    Add-Cmd "keep-title [대상]" "원격 bash가 탭 이름을 덮어쓰지 않게 ~/.bashrc를 설정 (서버마다 한 번)"
+    Add-Note "접속하면 프롬프트가 탭 제목을 바꿔 쓰는데, 그걸 막아 tb로 지정한 이름이 유지된다"
+    Add-Note "bash 전용. 고치기 전에 원격 ~/.bashrc를 백업하고, 적용 후 새 셸에서 실제로 사라졌는지 확인한다 (제거: keep-title -r)"
     Add-Cmd "p [대상]"         "ping 상태 감시 (= ping-watch, 대상을 생략하면 SVIP)"
     Add-Note "한 줄에서 갱신되고 상태가 바뀔 때만 기록이 남는다 (재부팅 확인용)"
     Add-Note "대상에 IP나 호스트명을 직접 줄 수 있다. -i 간격(초) -c 횟수, 종료는 Ctrl+C"
