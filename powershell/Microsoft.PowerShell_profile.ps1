@@ -3259,43 +3259,67 @@ function New-RatioBar {
     "{0}{1}$esc[38;5;238m{2}$esc[0m" -f $color, (([string][char]0x2588) * $filled), (([string][char]0x2591) * ($Width - $filled))
 }
 
-function Write-RemoteLogLine {
+function Format-RemoteLogLine {
     # fnc-ignore
-    # 로그 한 줄을 심각도에 따라 색을 입혀 쓴다. (rt 전용 - 서버 설정과 무관하게 이 PC에서 입힌다)
+    # 로그 한 줄에 심각도에 따라 색을 입혀 돌려준다. (rt 전용 - 서버 설정과 무관하게 이 PC에서 입힌다)
+    # 대량 출력에서는 줄마다 정규식을 새로 만드는 비용이 커지므로 처음 한 번만 만들어 재사용한다.
     param([string]$Line)
 
-    $esc = [char]27
-    $red = "$esc[38;2;255;89;94m"
-    $yellow = "$esc[38;2;255;202;58m"
-    $cyan = "$esc[38;5;80m"
-    $dim = "$esc[38;5;245m"
-    $reset = "$esc[0m"
+    if (-not $script:rt_log_style) {
+        $esc = [char]27
+        $script:rt_log_style = @{
+            Red    = "$esc[38;2;255;89;94m"
+            Yellow = "$esc[38;2;255;202;58m"
+            Cyan   = "$esc[38;5;80m"
+            Dim    = "$esc[38;5;245m"
+            Reset  = "$esc[0m"
+            Head   = [regex]::new('^==>.*<==$')
+            # 줄 맨 앞(시각 뒤여도 된다)에 오는 수준 표시. Info/Debug로 시작하는 형식이 여기서 잡힌다.
+            Level  = [regex]::new('^[\s\[\(<]*(trace|debug|verbose|fine|information|info|notice|warning|warn|error|err|fatal|critical|crit|severe|alert|emerg|panic)(?![A-Za-z])[\]\)>]*\s*[:\-|]*\s*', 'IgnoreCase')
+            Error  = [regex]::new('(?i)(\b(fatal|critical|crit|alert|emerg|errors?|err|fail|failed|failures?|denied|refused)\b|no such file|cannot open|permission denied)')
+            Warn   = [regex]::new('(?i)\b(warn|warning)\b')
+            Stamp  = [regex]::new('^(\S{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[^\s]*|\[[^\]]+\])')
+        }
+    }
+
+    $style = $script:rt_log_style
 
     # tail이 파일을 바꿔 읽을 때 넣는 머리글
-    if ($Line -match '^==>.*<==$') {
-        Write-Host ("{0}{1}{2}" -f $cyan, $Line, $reset)
-        return
+    if ($style.Head.IsMatch($Line)) { return ("{0}{1}{2}" -f $style.Cyan, $Line, $style.Reset) }
+
+    # 수준 표시를 먼저 본다. 줄 맨 앞에 없으면(시각이 앞선 형식이면) 시각을 떼고 다시 본다.
+    # 수준이 있으면 그 수준을 따른다 (본문에 error 같은 낱말이 섞였다고 Info 줄이 빨개지지 않게).
+    # [DEBUG]처럼 대괄호로 감싼 수준도 있어 시각 규칙보다 먼저 확인한다.
+    $stamp = $style.Stamp.Match($Line)
+    $head = ''
+    $rest = $Line
+    $level = $style.Level.Match($Line)
+
+    if (-not $level.Success -and $stamp.Success) {
+        $head = $stamp.Value
+        $rest = $Line.Substring($stamp.Length)
+        $level = $style.Level.Match($rest)
     }
 
-    if ($Line -match '(?i)(\b(fatal|critical|crit|alert|emerg|error|err|fail|failed|failure|denied|refused)\b|no such file|cannot open|permission denied)') {
-        Write-Host ("{0}{1}{2}" -f $red, $Line, $reset)
-        return
+    if ($level.Success) {
+        switch -Regex ($level.Groups[1].Value.ToLowerInvariant()) {
+            '^(fatal|critical|crit|severe|alert|emerg|panic|error|err)$' { return ("{0}{1}{2}" -f $style.Red, $Line, $style.Reset) }
+            '^(warning|warn)$' { return ("{0}{1}{2}" -f $style.Yellow, $Line, $style.Reset) }
+            '^(debug|trace|verbose|fine)$' { return ("{0}{1}{2}" -f $style.Dim, $Line, $style.Reset) }
+            default {
+                # info/notice는 흔하고 대개 정상 동작이라 시각·수준만 흐리게 하고 본문은 그대로 둔다.
+                return ("{0}{1}{2}{3}{4}" -f $style.Dim, $head, $level.Value, $style.Reset, $rest.Substring($level.Length))
+            }
+        }
     }
 
-    if ($Line -match '(?i)\b(warn|warning)\b') {
-        Write-Host ("{0}{1}{2}" -f $yellow, $Line, $reset)
-        return
-    }
+    if ($style.Error.IsMatch($Line)) { return ("{0}{1}{2}" -f $style.Red, $Line, $style.Reset) }
+    if ($style.Warn.IsMatch($Line)) { return ("{0}{1}{2}" -f $style.Yellow, $Line, $style.Reset) }
 
-    # 평범한 줄은 맨 앞 시각만 흐리게 해서 본문이 눈에 들어오게 한다.
-    $stamp = [regex]::Match($Line, '^(\S{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[^\s]*|\[[^\]]+\])')
+    # 수준 표시가 없는 줄은 맨 앞 시각만 흐리게 해서 본문이 눈에 들어오게 한다.
+    if ($stamp.Success) { return ("{0}{1}{2}{3}" -f $style.Dim, $stamp.Value, $style.Reset, $Line.Substring($stamp.Length)) }
 
-    if ($stamp.Success) {
-        Write-Host ("{0}{1}{2}{3}" -f $dim, $stamp.Value, $reset, $Line.Substring($stamp.Length))
-        return
-    }
-
-    Write-Host $Line
+    $Line
 }
 
 function rs {
@@ -3574,10 +3598,16 @@ function rt {
     try {
         [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+        # 로그가 쏟아질 때는 Write-Host가 병목이라(초당 8천 줄 수준) 콘솔에 직접 쓴다 - 6배 이상 빠르다.
+        # 인코딩을 바꾸면 [Console]::Out이 다시 만들어지므로 바꾼 뒤에 잡고, 줄마다 바로 내보내 실시간성은 유지한다.
+        $writer = [Console]::Out
+
         & ssh -o BatchMode=yes -o ConnectTimeout=5 -o RemoteCommand=none -o RequestTTY=no -p $global:SVPORT $global:SV $remoteCmd 2>&1 |
             ForEach-Object {
-                if ($piped) { [string]$_ } else { Write-RemoteLogLine -Line ([string]$_) }
+                if ($piped) { [string]$_ } else { $writer.WriteLine((Format-RemoteLogLine -Line ([string]$_))) }
             }
+
+        $writer.Flush()
     }
     finally {
         [Console]::OutputEncoding = $prevEncoding
@@ -4032,6 +4062,11 @@ function ssh-help {
     Add-Cmd "d [-r|-l|-u|-d|-g]" "현재 세션을 화면 분할로 복제 (= dup, 기본 -r 우측)"
     Add-Note "-g: 2x2 4분할 (세로 분할 후 양쪽을 가로 분할, 포커스는 원래 pane)"
     Add-Note "새 pane이 SV/DST/SVDIR 선택 상태를 그대로 이어받는다"
+    Add-Cmd "ws"               "열린 탭/분할과 각 pane의 SV·경로를 저장했다가 그대로 다시 연다"
+    Add-Note "ws (목록) / ws save <이름> [-m 메모] / ws show <이름> / ws load <이름> [-here] / ws rm <이름> / ws rename"
+    Add-Note "저장은 새 탭에서 실행한다 - 그 탭은 스냅샷에서 빠진다. 탭 순서·분할 모양·분할 비율까지 복원된다"
+    Add-Note "명령 실행 중인 pane은 상태를 답할 수 없어 어느 pane인지 알려준다 (Ctrl+C로 멈춘 뒤 다시 저장, -f면 구조만 저장)"
+    Add-Note "복원하면 SV/DST/SVDIR·작업 경로·제목·탭 색이 돌아오고, 실행 중이던 명령은 히스토리에 들어간다(위 화살표)"
     Add-Cmd "rsa-pubkey"       "로컬 공개키(id_rsa.pub) 내용을 출력한다"
 
     # ── 3. 원격 작업 디렉터리 ────────────────────────────────────
@@ -4053,7 +4088,9 @@ function ssh-help {
 
     Add-Section "로그 보기"
     Add-Cmd "rt <로그경로>"     "원격 로그를 실시간으로 따라 본다 (tail -F, 종료 Ctrl+C)"
-    Add-Note "ERROR/FATAL 줄은 빨강, WARN 줄은 노랑 - 색은 이 PC에서 입힌다"
+    Add-Note "ERROR/FATAL 빨강, WARN 노랑, DEBUG/TRACE 흐리게, INFO/NOTICE는 수준 표시만 흐리게"
+    Add-Note "줄 맨 앞(또는 시각 뒤)의 수준 표시를 먼저 본다 - Info 줄이 본문의 error 때문에 빨개지지 않는다"
+    Add-Note "수준 표시가 없는 줄은 낱말(error/fail/denied 등)로 판단하고, 맨 앞 시각은 흐리게 - 색은 모두 이 PC에서 입힌다"
     Add-Note "-n 처음 보여줄 줄수(기본 50) / -p 패턴 필터(대소문자 무시) / -o 따라가지 않고 한 번만"
     Add-Note "Tab: SVDIR 기준 자동완성. 권한이 필요한 로그는 접속 계정에 읽기 권한이 있어야 한다"
 
@@ -4572,4 +4609,793 @@ Register-ArgumentCompleter -CommandName tb, set-tabtitle -ParameterName Title -S
 
 #########################################################
 # 터미널 탭 제목 / 색상 (tt/tc/tb) 영역 End
+#########################################################
+
+
+#########################################################
+# 터미널 작업공간 스냅샷 (ws) 영역 Start
+#########################################################
+# 창에 열린 탭 순서 · 분할 구조 · 각 pane의 선택 상태(SV/DST/SVDIR/작업 경로)를 파일로 저장하고 그대로 다시 연다.
+#
+# 화면 구조는 UI 자동화로 읽는다 - WT가 구조를 알려주는 공개 방법이 없기 때문이다.
+# 각 pane의 변수는 밖에서 읽을 수 없으므로(pane마다 프로세스가 따로다) pane에 걸어둔 감시기가 요청을 받으면 스스로 답한다.
+# 감시기는 셸이 놀고 있을 때만 돌 수 있어, 명령을 실행 중인 pane은 응답하지 못한다 (저장할 때 어느 pane인지 알려준다).
+# 요청/응답 파일은 임시 폴더에서만 오가고 저장이 끝나면 지운다 - 남는 것은 스냅샷 파일 하나뿐이다.
+
+$global:ws_req_dir = Join-Path ([IO.Path]::GetTempPath()) 'pws-ws'
+$global:ws_store_dir = Join-Path (Split-Path -Parent $PROFILE.CurrentUserCurrentHost) 'workspaces'
+
+function Invoke-WsPaneRequest {
+    # fnc-ignore
+    # 스냅샷 요청 파일 하나를 처리한다. (각 pane의 감시기가 유휴 상태에서 부른다)
+    param([string]$Path)
+
+    $name = [IO.Path]::GetFileName($Path)
+
+    if ($name -like 'wsrel-*') {
+        # 표식으로 바꿔 둔 제목을 되돌린다. 빈 값이면 WT가 프로필 이름으로 돌아간다.
+        Write-TabTitleSequence ([string]$env:OMP_TITLE)
+        return
+    }
+
+    if ($name -notlike 'wsreq-*') { return }
+
+    # 화면의 어느 자리가 이 pane인지 정확히 맞추려고 제목을 잠깐 표식으로 바꾼다 (wsrel- 요청에서 되돌린다).
+    $marker = "ws:{0}" -f $PID
+    Write-TabTitleSequence $marker
+
+    $state = [ordered]@{
+        Pid      = $PID
+        Marker   = $marker
+        Session  = [string]$env:WT_SESSION
+        Title    = [string]$env:OMP_TITLE
+        TabColor = [string]$env:OMP_TABCOLOR
+        Cwd      = if ($PWD.Provider.Name -eq 'FileSystem') { $PWD.ProviderPath } else { $HOME }
+        Last     = ''
+    }
+
+    $last = Get-History -Count 1 -ErrorAction SilentlyContinue
+    if ($last) { $state.Last = [string]$last.CommandLine }
+
+    foreach ($nm in 'SV', 'SVID', 'SVIP', 'SVPORT', 'SVDIR', 'DST', 'DSTID', 'DSTIP', 'DSTPORT') {
+        $var = Get-Variable $nm -Scope Global -ErrorAction SilentlyContinue
+        $state[$nm] = if ($var -and $null -ne $var.Value) { [string]$var.Value } else { '' }
+    }
+
+    $reply = Join-Path $global:ws_req_dir ("reply-{0}-{1}.json" -f $name.Substring(6), $PID)
+    $state | ConvertTo-Json -Compress | Set-Content -LiteralPath $reply -Encoding utf8
+}
+
+function Register-WsPaneAgent {
+    # fnc-ignore
+    # 이 pane이 스냅샷 요청에 답할 수 있게 감시기를 건다. (프로필 로드 때 1회, 약 8ms)
+    if ($global:ws_agent) { return }
+    if (-not $env:WT_SESSION) { return }
+
+    try {
+        if (-not [IO.Directory]::Exists($global:ws_req_dir)) {
+            $null = [IO.Directory]::CreateDirectory($global:ws_req_dir)
+        }
+
+        $watcher = [IO.FileSystemWatcher]::new($global:ws_req_dir, 'ws*')
+        $watcher.EnableRaisingEvents = $true
+
+        $null = Register-ObjectEvent -InputObject $watcher -EventName Created -SourceIdentifier ("ws-agent-" + $PID) -Action {
+            try { Invoke-WsPaneRequest -Path $Event.SourceEventArgs.FullPath } catch { }
+        }
+
+        $global:ws_agent = $watcher
+    }
+    catch {
+        Write-Warning ("작업공간 감시기를 걸지 못했습니다: {0}" -f $_.Exception.Message)
+    }
+}
+
+function Get-WsTerminalLayout {
+    # fnc-ignore
+    # UI 자동화로 내 창의 탭 순서와 각 탭의 pane(사각형 + 표식)을 읽는다. (시험 때 이 함수만 바꿔 끼운다)
+    #
+    # pane 자체의 UIA 이름은 셸이 보낸 제목을 따라가지 않는다(프로필 이름 그대로다). 대신 탭 이름이
+    # '지금 활성화된 pane의 제목'을 보여주므로, pane을 하나씩 활성화하며 탭 이름(그 pane이 붙인 표식)과
+    # 포커스된 pane의 사각형을 짝지어 읽는다. 비활성 탭은 내용이 만들어져 있지 않아 탭도 하나씩 활성화한다.
+    param([string]$SelfMarker)
+
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+
+    $termCond = [System.Windows.Automation.PropertyCondition]::new(
+        [System.Windows.Automation.AutomationElement]::ClassNameProperty, 'TermControl')
+    $windowCond = [System.Windows.Automation.PropertyCondition]::new(
+        [System.Windows.Automation.AutomationElement]::ClassNameProperty, 'CASCADIA_HOSTING_WINDOW_CLASS')
+    $itemCond = [System.Windows.Automation.PropertyCondition]::new(
+        [System.Windows.Automation.AutomationElement]::ClassNameProperty, 'ListViewItem')
+
+    $selection = [System.Windows.Automation.SelectionItemPattern]::Pattern
+    $descendants = [System.Windows.Automation.TreeScope]::Descendants
+
+    # 창이 여러 개여도 프로세스는 하나라서 MainWindowHandle로는 못 고른다. 내 표식이 탭 이름에 보이는 창이 내 창이다.
+    $root = $null
+    $items = @()
+
+    foreach ($candidate in @([System.Windows.Automation.AutomationElement]::RootElement.FindAll(
+                [System.Windows.Automation.TreeScope]::Children, $windowCond))) {
+
+        $tabs = @($candidate.FindAll($descendants, $itemCond))
+
+        foreach ($tab in $tabs) {
+            if ($tab.Current.Name -eq $SelfMarker) { $root = $candidate; $items = $tabs; break }
+        }
+
+        if ($root) { break }
+    }
+
+    if (-not $root -or $items.Count -eq 0) { return $null }
+
+    $activeIndex = 0
+    for ($i = 0; $i -lt $items.Count; $i++) {
+        if ($items[$i].GetCurrentPattern($selection).Current.IsSelected) { $activeIndex = $i }
+    }
+
+    $canFocus = [bool](Get-Command wt -ErrorAction SilentlyContinue)
+    $tabsOut = @()
+    $selfTab = $activeIndex
+    $selfPane = 0
+
+    for ($i = 0; $i -lt $items.Count; $i++) {
+        $pattern = $items[$i].GetCurrentPattern($selection)
+
+        if (-not $pattern.Current.IsSelected) {
+            $pattern.Select()
+            Start-Sleep -Milliseconds 250
+        }
+
+        $terms = @($root.FindAll($descendants, $termCond) | Where-Object {
+                $_.Current.BoundingRectangle.Width -gt 1 -and $_.Current.BoundingRectangle.Height -gt 1
+            })
+
+        $panes = @()
+
+        if ($terms.Count -eq 1) {
+            $rect = $terms[0].Current.BoundingRectangle
+            $panes += [pscustomobject]@{
+                Name = [string]$items[$i].Current.Name
+                X    = [double]$rect.X; Y = [double]$rect.Y
+                W    = [double]$rect.Width; H = [double]$rect.Height
+            }
+        }
+        else {
+            for ($n = 0; $n -lt $terms.Count; $n++) {
+                # pane을 하나 활성화하면 탭 이름이 그 pane의 제목(표식)으로 바뀐다.
+                if ($canFocus) {
+                    & wt -w 0 focus-pane -t $n 2>$null
+                    Start-Sleep -Milliseconds 220
+                }
+
+                $focused = @($terms | Where-Object { $_.Current.HasKeyboardFocus })
+                $target = if ($focused.Count -eq 1) { $focused[0] } else { $terms[$n] }
+                $rect = $target.Current.BoundingRectangle
+
+                $panes += [pscustomobject]@{
+                    Name = [string]$items[$i].Current.Name
+                    X    = [double]$rect.X; Y = [double]$rect.Y
+                    W    = [double]$rect.Width; H = [double]$rect.Height
+                }
+
+                if ($items[$i].Current.Name -eq $SelfMarker) { $selfTab = $i; $selfPane = $n }
+            }
+        }
+
+        $tabsOut += [pscustomobject]@{ Index = $i; Title = [string]$items[$i].Current.Name; Panes = $panes }
+    }
+
+    # 보고 있던 탭과 pane으로 되돌린다.
+    $items[$selfTab].GetCurrentPattern($selection).Select()
+    if ($canFocus) {
+        Start-Sleep -Milliseconds 150
+        & wt -w 0 focus-pane -t $selfPane 2>$null
+    }
+
+    [pscustomobject]@{ ActiveIndex = $activeIndex; Tabs = $tabsOut }
+}
+
+function ConvertTo-WsPaneTree {
+    # fnc-ignore
+    # pane 사각형 목록을 좌우(V)/상하(H) 분할 트리로 바꾼다. 복원할 때 분할 방향과 비율로 쓴다.
+    param([object[]]$Panes)
+
+    $list = @($Panes)
+    if ($list.Count -eq 0) { return $null }
+    if ($list.Count -eq 1) { return [pscustomobject]@{ Kind = 'pane'; Pane = $list[0] } }
+
+    # 같은 방향으로 죽 늘어선 경계선을 하나 찾는다. 모든 pane이 그 선의 왼쪽/오른쪽(또는 위/아래)으로 깔끔히 갈려야 한다.
+    foreach ($dir in 'V', 'H') {
+        $edges = @($list | ForEach-Object { if ($dir -eq 'V') { $_.X + $_.W } else { $_.Y + $_.H } } | Sort-Object -Unique)
+
+        foreach ($edge in $edges) {
+            $first = @($list | Where-Object { if ($dir -eq 'V') { ($_.X + $_.W) -le ($edge + 2) } else { ($_.Y + $_.H) -le ($edge + 2) } })
+            $second = @($list | Where-Object { if ($dir -eq 'V') { $_.X -ge ($edge - 2) } else { $_.Y -ge ($edge - 2) } })
+
+            if ($first.Count -eq 0 -or $second.Count -eq 0) { continue }
+            if (($first.Count + $second.Count) -ne $list.Count) { continue }
+
+            $start = ($list | ForEach-Object { if ($dir -eq 'V') { $_.X } else { $_.Y } } | Measure-Object -Minimum).Minimum
+            $end = ($list | ForEach-Object { if ($dir -eq 'V') { $_.X + $_.W } else { $_.Y + $_.H } } | Measure-Object -Maximum).Maximum
+            $mid = ($second | ForEach-Object { if ($dir -eq 'V') { $_.X } else { $_.Y } } | Measure-Object -Minimum).Minimum
+
+            $total = $end - $start
+            if ($total -le 0) { continue }
+
+            # 분할 비율은 '새로 만드는 pane(뒤쪽)'의 몫이다 - wt split-pane -s 가 그 기준이다.
+            $ratio = [Math]::Round((($end - $mid) / $total), 3)
+            if ($ratio -le 0.02 -or $ratio -ge 0.98) { continue }
+
+            return [pscustomobject]@{
+                Kind   = 'split'
+                Dir    = $dir
+                Ratio  = $ratio
+                First  = (ConvertTo-WsPaneTree -Panes $first)
+                Second = (ConvertTo-WsPaneTree -Panes $second)
+            }
+        }
+    }
+
+    # 나눌 선을 못 찾으면(겹쳐 보이는 경우) 순서대로 나열만 해 둔다 - 복원은 좌우 균등 분할로 한다.
+    $half = [int][Math]::Ceiling($list.Count / 2)
+
+    [pscustomobject]@{
+        Kind   = 'split'
+        Dir    = 'V'
+        Ratio  = 0.5
+        First  = (ConvertTo-WsPaneTree -Panes $list[0..($half - 1)])
+        Second = (ConvertTo-WsPaneTree -Panes $list[$half..($list.Count - 1)])
+    }
+}
+
+function Get-WsLeafPanes {
+    # fnc-ignore
+    # 분할 트리 안의 pane을 생성 순서대로 모은다.
+    param([object]$Node)
+
+    if (-not $Node) { return @() }
+    if ($Node.Kind -eq 'pane') { return @($Node.Pane) }
+
+    @(Get-WsLeafPanes -Node $Node.First) + @(Get-WsLeafPanes -Node $Node.Second)
+}
+
+function Get-WsPaneSpot {
+    # fnc-ignore
+    # 탭 안에서 이 pane이 어느 자리인지 사람 말로 적는다. (응답하지 않은 pane을 알려줄 때 쓴다)
+    param([object]$Pane, [object[]]$All)
+
+    $minX = ($All | ForEach-Object { $_.X } | Measure-Object -Minimum).Minimum
+    $maxX = ($All | ForEach-Object { $_.X + $_.W } | Measure-Object -Maximum).Maximum
+    $minY = ($All | ForEach-Object { $_.Y } | Measure-Object -Minimum).Minimum
+    $maxY = ($All | ForEach-Object { $_.Y + $_.H } | Measure-Object -Maximum).Maximum
+
+    $cx = $Pane.X + ($Pane.W / 2)
+    $cy = $Pane.Y + ($Pane.H / 2)
+
+    $side = if (($maxX - $minX) -le ($Pane.W + 4)) { '' }
+        elseif ($cx -lt (($minX + $maxX) / 2)) { '왼쪽' } else { '오른쪽' }
+
+    $level = if (($maxY - $minY) -le ($Pane.H + 4)) { '' }
+        elseif ($cy -lt (($minY + $maxY) / 2)) { '위' } else { '아래' }
+
+    $spot = (@($side, $level) | Where-Object { $_ }) -join ' '
+    if ($spot) { $spot } else { '전체' }
+}
+
+function Save-WsSnapshot {
+    # fnc-ignore
+    # 현재 창의 탭/분할/각 pane 상태를 읽어 스냅샷 파일로 저장한다. (ws save)
+    param([string]$Name, [string]$Memo, [switch]$Force, [switch]$Yes)
+
+    if (-not $env:WT_SESSION) {
+        Write-Host "Windows Terminal 안에서만 저장할 수 있습니다." -ForegroundColor Yellow
+        return
+    }
+
+    if ($Name -match '[\\/:*?"<>|]') {
+        Write-Error ("이름에 쓸 수 없는 문자가 있습니다: {0}" -f $Name)
+        return
+    }
+
+    if (-not [IO.Directory]::Exists($global:ws_store_dir)) {
+        $null = [IO.Directory]::CreateDirectory($global:ws_store_dir)
+    }
+
+    $file = Join-Path $global:ws_store_dir ("{0}.json" -f $Name)
+
+    if ((Test-Path -LiteralPath $file) -and -not $Yes) {
+        Write-Host ("[{0}] 스냅샷이 이미 있습니다. 덮어쓸까요? " -f $Name) -ForegroundColor Yellow -NoNewline
+        if ((Read-Host "(y/N)") -notmatch '^(y|yes)$') {
+            Write-Host "취소했습니다." -ForegroundColor DarkGray
+            return
+        }
+    }
+
+    if (-not [IO.Directory]::Exists($global:ws_req_dir)) {
+        $null = [IO.Directory]::CreateDirectory($global:ws_req_dir)
+    }
+
+    $id = [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $selfMarker = "ws:{0}" -f $PID
+    $requestPath = Join-Path $global:ws_req_dir ("wsreq-{0}" -f $id)
+    $releasePath = Join-Path $global:ws_req_dir ("wsrel-{0}" -f $id)
+
+    $esc = [char]27
+    $head = "$esc[1;38;2;231;111;81m"
+    $sub = "$esc[38;5;245m"
+
+    Write-Host ("{0}save:$esc[0m {1}{2}$esc[0m  {0}(pane 상태 요청 중...)$esc[0m" -f $sub, $head, $Name)
+
+    # 이 pane도 화면에서 찾아야 하므로 같은 표식을 직접 단다 (실행 중이라 감시기는 못 돈다).
+    Write-TabTitleSequence $selfMarker
+    Set-Content -LiteralPath $requestPath -Value $id -Encoding utf8
+
+    # 유휴 pane은 0.3초 안에 답한다. 느린 경우를 감안해 1.5초까지 기다린다.
+    $deadline = (Get-Date).AddMilliseconds(1500)
+    $replies = @()
+
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 150
+        $replies = @(Get-ChildItem -LiteralPath $global:ws_req_dir -Filter ("reply-{0}-*.json" -f $id) -ErrorAction SilentlyContinue)
+    }
+
+    $states = @{}
+
+    foreach ($reply in $replies) {
+        try {
+            $state = Get-Content -LiteralPath $reply.FullName -Raw -Encoding utf8 | ConvertFrom-Json
+            $states[$state.Marker] = $state
+        }
+        catch { }
+    }
+
+    $layout = $null
+
+    try { $layout = Get-WsTerminalLayout -SelfMarker $selfMarker }
+    catch { Write-Error ("화면 구조를 읽지 못했습니다: {0}" -f $_.Exception.Message) }
+
+    # 표식을 되돌린다 (다른 pane은 감시기가, 이 pane은 직접).
+    Set-Content -LiteralPath $releasePath -Value $id -Encoding utf8
+    Start-Sleep -Milliseconds 400
+    Write-TabTitleSequence ([string]$env:OMP_TITLE)
+
+    Remove-Item -LiteralPath $requestPath, $releasePath -Force -ErrorAction SilentlyContinue
+    $replies | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+
+    if (-not $layout) {
+        Write-Error "내 창을 찾지 못했습니다. (Windows Terminal 창에서 실행해 주세요)"
+        return
+    }
+
+    $tabs = @()
+    $missing = @()
+    $paneCount = 0
+
+    foreach ($tab in $layout.Tabs) {
+        # 저장을 실행 중인 이 pane은 스냅샷에서 뺀다 (복원할 때 다시 만들 이유가 없다).
+        $panes = @($tab.Panes | Where-Object { $_.Name -ne $selfMarker })
+        if ($panes.Count -eq 0) { continue }
+
+        $tree = ConvertTo-WsPaneTree -Panes $panes
+        $leaves = @(Get-WsLeafPanes -Node $tree)
+        $title = ''
+        $color = ''
+
+        foreach ($leaf in $leaves) {
+            $paneCount++
+            $state = $states[$leaf.Name]
+
+            if ($state) {
+                Add-Member -InputObject $leaf -NotePropertyName Responded -NotePropertyValue $true -Force
+                foreach ($nm in 'Pid', 'Title', 'TabColor', 'Cwd', 'Last', 'SV', 'SVID', 'SVIP', 'SVPORT', 'SVDIR', 'DST', 'DSTID', 'DSTIP', 'DSTPORT') {
+                    Add-Member -InputObject $leaf -NotePropertyName $nm -NotePropertyValue ([string]$state.$nm) -Force
+                }
+                if (-not $title -and $state.Title) { $title = [string]$state.Title }
+                if (-not $color -and $state.TabColor) { $color = [string]$state.TabColor }
+            }
+            else {
+                Add-Member -InputObject $leaf -NotePropertyName Responded -NotePropertyValue $false -Force
+                Add-Member -InputObject $leaf -NotePropertyName Title -NotePropertyValue $leaf.Name -Force
+                Add-Member -InputObject $leaf -NotePropertyName Cwd -NotePropertyValue '' -Force
+                $missing += [pscustomobject]@{ Tab = $tab.Index; TabTitle = $tab.Title; Spot = (Get-WsPaneSpot -Pane $leaf -All $panes); Name = $leaf.Name }
+            }
+        }
+
+        if (-not $title) { $title = [string]$tab.Title }
+
+        $tabs += [pscustomobject]@{
+            Title  = $title
+            Color  = $color
+            Layout = $tree
+        }
+    }
+
+    if ($tabs.Count -eq 0) {
+        Write-Host "저장할 탭이 없습니다. (이 pane 말고 다른 탭/pane이 있어야 합니다)" -ForegroundColor Yellow
+        return
+    }
+
+    if ($missing.Count -gt 0) {
+        Write-Host ""
+        Write-Host ("응답하지 않은 pane {0}개 - 명령을 실행 중인 pane은 상태를 답할 수 없습니다." -f $missing.Count) -ForegroundColor Yellow
+
+        foreach ($item in $missing) {
+            Write-Host ("  탭[{0}] '{1}' 의 {2} pane   (제목: {3})" -f $item.Tab, $item.TabTitle, $item.Spot, $item.Name) -ForegroundColor Yellow
+        }
+
+        Write-Host "  해당 pane에서 Ctrl+C로 잠깐 멈춘 뒤 다시 저장하면 변수까지 저장됩니다." -ForegroundColor DarkCyan
+        Write-Host "  ssh로 원격 셸에 들어가 있는 pane은 Ctrl+C로 빠져나오지 못합니다 - 구조만 저장하려면 ws save <이름> -f" -ForegroundColor DarkCyan
+
+        if (-not $Force) {
+            Write-Host "저장하지 않았습니다." -ForegroundColor Yellow
+            return
+        }
+    }
+
+    $snapshot = [pscustomobject]@{
+        Version = 1
+        Name    = $Name
+        Memo    = [string]$Memo
+        SavedAt = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+        Tabs    = $tabs
+    }
+
+    $snapshot | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $file -Encoding utf8
+    Write-Host ("저장 완료: {0}  (탭 {1} / pane {2})" -f $file, $tabs.Count, $paneCount) -ForegroundColor Green
+    Show-WsSnapshot -Name $Name
+}
+
+function Show-WsTree {
+    # fnc-ignore
+    # 분할 트리를 들여쓰기로 그린다. (ws show)
+    param([object]$Node, [int]$Depth = 2)
+
+    $esc = [char]27
+    $dim = "$esc[38;5;245m"
+    $reset = "$esc[0m"
+    $pad = ' ' * ($Depth * 2)
+
+    if ($Node.Kind -eq 'pane') {
+        $pane = $Node.Pane
+        $bits = @()
+
+        if ($pane.SV) { $bits += "SV={0}" -f $pane.SV }
+        if ($pane.SVDIR) { $bits += "DIR={0}" -f $pane.SVDIR }
+        if ($pane.DST) { $bits += "DST={0}" -f $pane.DST }
+        if ($pane.Cwd) { $bits += $pane.Cwd }
+        if (-not $pane.Responded) { $bits += '응답 없음(구조만)' }
+
+        $label = if ($pane.Title) { $pane.Title } else { 'pwsh' }
+        Write-Host ("{0}· {1}  {2}{3}{4}" -f $pad, $label, $dim, ($bits -join '  ·  '), $reset)
+
+        if ($pane.Last) {
+            Write-Host ("{0}  {1}마지막 명령: {2}{3}" -f $pad, $dim, $pane.Last, $reset)
+        }
+
+        return
+    }
+
+    $dirText = if ($Node.Dir -eq 'V') { '좌우' } else { '상하' }
+    Write-Host ("{0}{1}{2} 분할 (뒤쪽 {3}%){4}" -f $pad, $dim, $dirText, [int]($Node.Ratio * 100), $reset)
+    Show-WsTree -Node $Node.First -Depth ($Depth + 1)
+    Show-WsTree -Node $Node.Second -Depth ($Depth + 1)
+}
+
+function Show-WsSnapshot {
+    # fnc-ignore
+    # 스냅샷 하나를 나무 모양으로 보여준다. (ws show)
+    param([string]$Name)
+
+    $file = Join-Path $global:ws_store_dir ("{0}.json" -f $Name)
+
+    if (-not (Test-Path -LiteralPath $file)) {
+        Write-Error ("스냅샷을 찾지 못했습니다: {0}" -f $Name)
+        return
+    }
+
+    $snapshot = Get-Content -LiteralPath $file -Raw -Encoding utf8 | ConvertFrom-Json
+    $esc = [char]27
+    $head = "$esc[1;38;2;231;111;81m"
+    $sub = "$esc[38;5;245m"
+
+    $panes = 0
+    foreach ($tab in $snapshot.Tabs) { $panes += @(Get-WsLeafPanes -Node $tab.Layout).Count }
+
+    Write-Host ("{0}workspace:$esc[0m {1}{2}$esc[0m  {0}(탭 {3} · pane {4} · {5}){6}" -f
+        $sub, $head, $snapshot.Name, $snapshot.Tabs.Count, $panes, $snapshot.SavedAt, "$esc[0m")
+
+    if ($snapshot.Memo) { Write-Host ("  {0}메모: {1}$esc[0m" -f $sub, $snapshot.Memo) }
+
+    for ($i = 0; $i -lt $snapshot.Tabs.Count; $i++) {
+        $tab = $snapshot.Tabs[$i]
+        $color = if ($tab.Color) { "  {0}" -f $tab.Color } else { '' }
+        Write-Host ("  탭[{0}] {1}{2}" -f $i, $tab.Title, $color) -ForegroundColor Cyan
+        Show-WsTree -Node $tab.Layout -Depth 2
+    }
+}
+
+function New-WsPaneInitScript {
+    # fnc-ignore
+    # 복원한 pane이 프로필을 읽은 뒤 실행할 초기화 스크립트를 만든다. (실행 후 스스로 지운다 - dup과 같은 방식)
+    param([object]$Pane, [string]$Snapshot)
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+
+    foreach ($nm in 'SV', 'SVID', 'SVIP', 'SVDIR', 'DST', 'DSTID', 'DSTIP') {
+        $value = [string]$Pane.$nm
+        if ($value) { $lines.Add(("`$global:{0} = '{1}'" -f $nm, ($value -replace "'", "''"))) }
+    }
+
+    foreach ($nm in 'SVPORT', 'DSTPORT') {
+        $value = [string]$Pane.$nm
+        if ($value) { $lines.Add(("`$global:{0} = {1}" -f $nm, [int]$value)) }
+    }
+
+    # 프롬프트(oh-my-posh)가 읽는 환경변수도 같이 맞춘다.
+    foreach ($pair in @(@('OMP_SV', 'SV'), @('OMP_SVID', 'SVID'), @('OMP_SVIP', 'SVIP'), @('OMP_SVPORT', 'SVPORT'),
+            @('OMP_SVDIR', 'SVDIR'), @('OMP_DST', 'DST'), @('OMP_DSTID', 'DSTID'), @('OMP_DSTIP', 'DSTIP'), @('OMP_DSTPORT', 'DSTPORT'))) {
+        $value = [string]$Pane.($pair[1])
+        if ($value) { $lines.Add(("`$env:{0} = '{1}'" -f $pair[0], ($value -replace "'", "''"))) }
+    }
+
+    if ($Pane.Title) {
+        $lines.Add(("`$env:OMP_TITLE = '{0}'" -f ([string]$Pane.Title -replace "'", "''")))
+        $lines.Add('Write-TabTitleSequence $env:OMP_TITLE')
+    }
+
+    if ($Pane.TabColor) {
+        $lines.Add(("`$env:OMP_TABCOLOR = '{0}'" -f ([string]$Pane.TabColor -replace "'", "''")))
+        $lines.Add('Write-TabColorSequence $env:OMP_TABCOLOR')
+    }
+
+    if ($Pane.Last) {
+        # 실행하지는 않는다 - 히스토리에만 넣어 두면 위 화살표 한 번으로 이어서 할 수 있다.
+        $lines.Add(("`$ws_last = '{0}'" -f ([string]$Pane.Last -replace "'", "''")))
+        $lines.Add('try { Import-Module PSReadLine -ErrorAction Stop; [Microsoft.PowerShell.PSConsoleReadLine]::AddToHistory($ws_last) } catch { }')
+        $lines.Add('Write-Host ("ws: 실행 중이던 명령 -> {0}   (위 화살표로 불러오기)" -f $ws_last) -ForegroundColor DarkCyan')
+        $lines.Add('Remove-Variable ws_last -ErrorAction SilentlyContinue')
+    }
+
+    $lines.Add(("Write-Host 'ws: 작업공간 [{0}] 복원' -ForegroundColor DarkCyan" -f ($Snapshot -replace "'", "''")))
+    $lines.Add('Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue')
+
+    $path = Join-Path ([IO.Path]::GetTempPath()) ("ws_{0}.ps1" -f [guid]::NewGuid().ToString('N'))
+    Set-Content -LiteralPath $path -Value $lines -Encoding utf8BOM
+    $path
+}
+
+function Add-WsSplitArgs {
+    # fnc-ignore
+    # 분할 트리를 wt 인자로 펼친다. 분할할 때마다 대상 pane을 focus-pane으로 지정해 순서가 어긋나지 않게 한다.
+    param([object]$Node, [int]$PaneId, [object]$Context)
+
+    if ($Node.Kind -ne 'split') { return }
+
+    $Context.Counter++
+    $newId = $Context.Counter
+
+    # 새로 만드는 pane에는 뒤쪽(Second) 가지의 첫 pane이 들어간다.
+    $leaf = @(Get-WsLeafPanes -Node $Node.Second)[0]
+    $init = New-WsPaneInitScript -Pane $leaf -Snapshot $Context.Snapshot
+    $Context.Scripts.Add($init)
+
+    $ratio = [Math]::Min(0.95, [Math]::Max(0.05, [double]$Node.Ratio))
+    $cwd = if ($leaf.Cwd -and (Test-Path -LiteralPath $leaf.Cwd)) { [string]$leaf.Cwd } else { $HOME }
+
+    $Context.Args.AddRange([string[]]@(
+            ';', 'focus-pane', '-t', ([string]$PaneId),
+            ';', 'split-pane', ("-{0}" -f $Node.Dir), '-s', $ratio.ToString('0.###', [System.Globalization.CultureInfo]::InvariantCulture),
+            '-d', $cwd, $Context.Shell, '-NoExit', '-File', $init
+        ))
+
+    Add-WsSplitArgs -Node $Node.First -PaneId $PaneId -Context $Context
+    Add-WsSplitArgs -Node $Node.Second -PaneId $newId -Context $Context
+}
+
+function Restore-WsSnapshot {
+    # fnc-ignore
+    # 스냅샷대로 탭과 분할을 다시 만든다. (ws load)
+    param([string]$Name, [switch]$Here)
+
+    $file = Join-Path $global:ws_store_dir ("{0}.json" -f $Name)
+
+    if (-not (Test-Path -LiteralPath $file)) {
+        Write-Error ("스냅샷을 찾지 못했습니다: {0}   (목록: ws)" -f $Name)
+        return
+    }
+
+    if (-not (Get-Command wt -ErrorAction SilentlyContinue)) {
+        Write-Error "wt(Windows Terminal)를 찾을 수 없습니다."
+        return
+    }
+
+    $snapshot = Get-Content -LiteralPath $file -Raw -Encoding utf8 | ConvertFrom-Json
+    $shell = (Get-Process -Id $PID).Path
+
+    $context = [pscustomobject]@{
+        Args     = [System.Collections.Generic.List[string]]::new()
+        Scripts  = [System.Collections.Generic.List[string]]::new()
+        Counter  = 0
+        Shell    = $shell
+        Snapshot = [string]$snapshot.Name
+    }
+
+    $first = $true
+
+    foreach ($tab in $snapshot.Tabs) {
+        $leaf = @(Get-WsLeafPanes -Node $tab.Layout)[0]
+        $init = New-WsPaneInitScript -Pane $leaf -Snapshot $snapshot.Name
+        $context.Scripts.Add($init)
+        $context.Counter = 0
+
+        $cwd = if ($leaf.Cwd -and (Test-Path -LiteralPath $leaf.Cwd)) { [string]$leaf.Cwd } else { $HOME }
+
+        if (-not $first) { $context.Args.Add(';') }
+        $first = $false
+
+        # --title/--tabColor로 지정하면 WT가 그 값을 고정해 이후 셸이 보내는 제목·색(tb/tc)이 무시된다.
+        # 그래서 제목과 색은 각 pane의 초기화 스크립트가 셸에서 지정하게 둔다.
+        $context.Args.AddRange([string[]]@('new-tab', '-d', $cwd, $shell, '-NoExit', '-File', $init))
+
+        Add-WsSplitArgs -Node $tab.Layout -PaneId 0 -Context $context
+    }
+
+    # 기본은 새 창이다. -here면 지금 창에 탭으로 붙인다.
+    $window = if ($Here) { '0' } else { "ws-{0}" -f [guid]::NewGuid().ToString('N').Substring(0, 6) }
+    $panes = @($context.Scripts).Count
+
+    Write-Host ("복원: [{0}]  탭 {1} · pane {2}  ->  {3}" -f
+        $snapshot.Name, $snapshot.Tabs.Count, $panes, $(if ($Here) { '현재 창에 탭 추가' } else { '새 창' })) -ForegroundColor Green
+
+    # 인자는 splat으로 넘긴다 - 배열을 그대로 넘기면 한 덩어리로 전달될 수 있다 (dup과 같은 방식).
+    $wtArgs = @($context.Args)
+    & wt -w $window @wtArgs
+
+    if ($LASTEXITCODE -ne 0) {
+        $context.Scripts | ForEach-Object { Remove-Item -LiteralPath $_ -Force -ErrorAction SilentlyContinue }
+        Write-Error ("복원에 실패했습니다 (exit code: {0})" -f $LASTEXITCODE)
+    }
+}
+
+function Get-WsSnapshotList {
+    # fnc-ignore
+    # 저장된 스냅샷 목록을 읽는다.
+    if (-not [IO.Directory]::Exists($global:ws_store_dir)) { return @() }
+
+    foreach ($file in @(Get-ChildItem -LiteralPath $global:ws_store_dir -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object Name)) {
+        try {
+            $snapshot = Get-Content -LiteralPath $file.FullName -Raw -Encoding utf8 | ConvertFrom-Json
+            $panes = 0
+            foreach ($tab in $snapshot.Tabs) { $panes += @(Get-WsLeafPanes -Node $tab.Layout).Count }
+
+            [pscustomobject]@{
+                Name    = [string]$snapshot.Name
+                Tabs    = @($snapshot.Tabs).Count
+                Panes   = $panes
+                SavedAt = [string]$snapshot.SavedAt
+                Memo    = [string]$snapshot.Memo
+            }
+        }
+        catch {
+            [pscustomobject]@{ Name = $file.BaseName; Tabs = 0; Panes = 0; SavedAt = '읽기 실패'; Memo = '' }
+        }
+    }
+}
+
+function ws {
+    # 터미널 작업공간(탭 순서·분할·각 pane의 SV/경로)을 저장하고 그대로 다시 연다. (ws / ws save 이름 / ws show 이름 / ws load 이름 [-here] / ws rm 이름 / ws rename 이전 새이름)
+    param(
+        [Parameter(Position = 0)][string]$Action,
+        [Parameter(Position = 1)][string]$Name,
+        [Parameter(Position = 2)][string]$NewName,
+        [Alias('m')][string]$Memo,
+        [Alias('f')][switch]$Force,
+        [Alias('y')][switch]$Yes,
+        [switch]$Here
+    )
+
+    $esc = [char]27
+    $sub = "$esc[38;5;245m"
+
+    if (-not $Action -or $Action -in 'list', 'ls') {
+        $items = @(Get-WsSnapshotList)
+
+        if ($items.Count -eq 0) {
+            Write-Host "저장된 작업공간이 없습니다." -ForegroundColor Yellow
+            Write-Host ("  {0}새 탭에서 ws save <이름> 으로 저장합니다.$esc[0m" -f $sub)
+            return
+        }
+
+        Write-Host ("{0}workspace:$esc[0m {1}개  {0}({2})$esc[0m" -f $sub, $items.Count, $global:ws_store_dir)
+
+        foreach ($item in $items) {
+            Write-Host ("  {0,-16}" -f $item.Name) -NoNewline -ForegroundColor Green
+            Write-Host ("탭 {0} · pane {1}   {2}{3}" -f $item.Tabs, $item.Panes, $sub, $item.SavedAt) -NoNewline
+            Write-Host ("{0}  {1}$esc[0m" -f $sub, $item.Memo)
+        }
+
+        return
+    }
+
+    switch -Regex ($Action) {
+        '^(save|s)$' {
+            if (-not $Name) { Write-Host "사용법: ws save <이름> [-m 메모] [-f 응답 없는 pane도 저장]" -ForegroundColor Yellow; return }
+            Save-WsSnapshot -Name $Name -Memo $Memo -Force:$Force -Yes:$Yes
+        }
+        '^(load|l)$' {
+            if (-not $Name) { Write-Host "사용법: ws load <이름> [-here 현재 창에 탭으로 추가]" -ForegroundColor Yellow; return }
+            Restore-WsSnapshot -Name $Name -Here:$Here
+        }
+        '^(show|view)$' {
+            if (-not $Name) { Write-Host "사용법: ws show <이름>" -ForegroundColor Yellow; return }
+            Show-WsSnapshot -Name $Name
+        }
+        '^(rm|remove|del|delete)$' {
+            if (-not $Name) { Write-Host "사용법: ws rm <이름>" -ForegroundColor Yellow; return }
+            $file = Join-Path $global:ws_store_dir ("{0}.json" -f $Name)
+
+            if (-not (Test-Path -LiteralPath $file)) { Write-Error ("스냅샷을 찾지 못했습니다: {0}" -f $Name); return }
+
+            if (-not $Yes) {
+                Write-Host ("[{0}] 스냅샷을 지울까요? " -f $Name) -ForegroundColor Yellow -NoNewline
+                if ((Read-Host "(y/N)") -notmatch '^(y|yes)$') { Write-Host "취소했습니다." -ForegroundColor DarkGray; return }
+            }
+
+            Remove-Item -LiteralPath $file -Force
+            Write-Host ("지웠습니다: {0}" -f $Name) -ForegroundColor Green
+        }
+        '^(rename|mv)$' {
+            if (-not $Name -or -not $NewName) { Write-Host "사용법: ws rename <이전이름> <새이름>" -ForegroundColor Yellow; return }
+
+            $file = Join-Path $global:ws_store_dir ("{0}.json" -f $Name)
+            $target = Join-Path $global:ws_store_dir ("{0}.json" -f $NewName)
+
+            if (-not (Test-Path -LiteralPath $file)) { Write-Error ("스냅샷을 찾지 못했습니다: {0}" -f $Name); return }
+            if (Test-Path -LiteralPath $target) { Write-Error ("이미 있는 이름입니다: {0}" -f $NewName); return }
+
+            $snapshot = Get-Content -LiteralPath $file -Raw -Encoding utf8 | ConvertFrom-Json
+            $snapshot.Name = $NewName
+            $snapshot | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $target -Encoding utf8
+            Remove-Item -LiteralPath $file -Force
+            Write-Host ("이름을 바꿨습니다: {0} -> {1}" -f $Name, $NewName) -ForegroundColor Green
+        }
+        default {
+            Write-Host "사용법: ws [list] | ws save <이름> [-m 메모] [-f] | ws show <이름> | ws load <이름> [-here] | ws rm <이름> | ws rename <이전> <새이름>" -ForegroundColor Yellow
+        }
+    }
+}
+
+# ws 자동완성: 동작 이름과 저장된 스냅샷 이름을 후보로 보여준다.
+Register-ArgumentCompleter -CommandName ws -ParameterName Action -ScriptBlock {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+    foreach ($action in 'save', 'load', 'show', 'list', 'rm', 'rename') {
+        if ($action -like "$wordToComplete*") {
+            [System.Management.Automation.CompletionResult]::new($action, $action, 'ParameterValue', $action)
+        }
+    }
+}
+
+Register-ArgumentCompleter -CommandName ws -ParameterName Name -ScriptBlock {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+    if (-not (Get-Command Get-WsSnapshotList -ErrorAction SilentlyContinue)) { return }
+
+    foreach ($item in @(Get-WsSnapshotList)) {
+        if ($item.Name -like "$wordToComplete*") {
+            $text = if ($item.Name -match '\s') { "'{0}'" -f $item.Name } else { $item.Name }
+            [System.Management.Automation.CompletionResult]::new($text, $item.Name, 'ParameterValue',
+                ("탭 {0} · pane {1} · {2}" -f $item.Tabs, $item.Panes, $item.SavedAt))
+        }
+    }
+}
+
+# 이 pane도 스냅샷 요청에 답할 수 있게 감시기를 건다 (WT 안에서만).
+Register-WsPaneAgent
+
+#########################################################
+# 터미널 작업공간 스냅샷 (ws) 영역 End
 #########################################################
