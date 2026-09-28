@@ -1,4 +1,19 @@
 #########################################################
+# 외부 스크립트 로더 호출
+#########################################################
+# script-loader.ps1은 예전에 profile.ps1(CurrentUserAllHosts)이라 PowerShell이 자동으로 읽었다.
+# 이름을 바꿔 자동 로드가 안 되므로 여기서 직접 읽는다 (예전과 같은 순서: 로더 → 폴더 스크립트 → 아래 본문).
+$script_loader_file = Join-Path (Split-Path -Parent $PROFILE.CurrentUserCurrentHost) 'script-loader.ps1'
+
+if (Test-Path -LiteralPath $script_loader_file) {
+    . $script_loader_file
+}
+else {
+    Write-Warning ("스크립트 로더를 찾지 못했습니다: {0}" -f $script_loader_file)
+}
+
+
+#########################################################
 # 셸 초기화 영역 Start - 로드 순서 중요
 #########################################################
 
@@ -92,6 +107,44 @@ Set-PSReadLineOption -PredictionViewStyle ListView
 Set-PSReadLineOption -Colors @{ Parameter = '#7E8BA3' }
 Set-PSReadLineOption -Colors @{ Operator = '#7E8BA3' }
 
+# 오타는 히스토리 파일에 남기지 않는다. 구문 오류이거나 부르려는 명령이 없으면 MemoryOnly로 돌려
+# 이 창에서는 위/아래 키로 불러와 고칠 수 있게 하되 파일에는 쓰지 않는다.
+# (Enter 시점에는 실행 결과를 알 수 없으므로, 명령 자체는 정상인데 실패한 경우는 평소처럼 저장된다)
+Set-PSReadLineOption -AddToHistoryHandler {
+    param([string]$line)
+
+    $both = [Microsoft.PowerShell.AddToHistoryOption]::MemoryAndFile
+    $memoryOnly = [Microsoft.PowerShell.AddToHistoryOption]::MemoryOnly
+
+    try {
+        # 비밀값이 든 줄을 거르는 PSReadLine 기본 판단을 먼저 따른다.
+        $default = [Microsoft.PowerShell.PSConsoleReadLine]::GetDefaultAddToHistoryOption($line)
+        if ($default -ne $both) { return $default }
+
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($line, [ref]$null, [ref]$errors)
+        if ($errors.Count -gt 0) { return $memoryOnly }
+
+        # 이름이 글자 그대로 적힌 명령만 확인한다 (& $exe 처럼 변수로 부르는 건 판단하지 않는다).
+        $commands = $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true)
+
+        foreach ($command in $commands) {
+            $name = $command.GetCommandName()
+            if (-not $name) { continue }
+            if (Get-Command -Name $name -ErrorAction Ignore) { continue }
+            if (Test-Path -LiteralPath $name -ErrorAction Ignore) { continue }   # .\script.ps1 처럼 경로로 실행하는 경우
+
+            return $memoryOnly
+        }
+
+        return $both
+    }
+    catch {
+        # 판단 중 문제가 생기면 기록이 빠지는 것보다 평소대로 저장하는 편이 낫다.
+        return $both
+    }
+}
+
 #########################################################
 # 셸 초기화 영역 End
 #########################################################
@@ -112,6 +165,7 @@ Set-Alias vi nvim
 Set-Alias grep findstr
 Set-Alias zz zi
 Set-Alias -Name c -Value ssh-con
+Set-Alias his Get-History
 
 #########################################################
 # 전역 변수 / Alias 영역 End
@@ -239,8 +293,8 @@ function upload-cfg
     $originalPath = Get-Location
     cd "C:\Users\hanssak\win_term\window_setting"
     cp $profile ./powershell/
-    # profile.ps1(CurrentUserAllHosts 로더)과 자동 로드 폴더($my_scripts_dir)의 스크립트도 백업한다.
-    cp $profile.CurrentUserAllHosts ./powershell/
+    # 스크립트 로더(script-loader.ps1)와 자동 로드 폴더($my_scripts_dir)의 스크립트도 백업한다.
+    cp $script_loader_file ./powershell/
     if ($global:my_scripts_dir -and (Test-Path $global:my_scripts_dir)) {
         $null = New-Item -ItemType Directory -Force -Path ./powershell/scripts
         cp (Join-Path $global:my_scripts_dir '*.ps1') ./powershell/scripts/
@@ -276,6 +330,17 @@ function open-his
 {
     # 명령 히스토리 파일을 VSCode로 연다.
     code "$his_file"
+}
+
+function his-all
+{
+    # 히스토리 파일에 쌓인 전체 명령을 화면에 모두 출력한다. (현재 창 기록만 보려면 his = Get-History)
+    if (-not (Test-Path -LiteralPath $his_file)) {
+        Write-Host ("히스토리 파일이 없습니다: {0}" -f $his_file) -ForegroundColor Yellow
+        return
+    }
+
+    Get-Content -LiteralPath $his_file
 }
 
 function compact-his {
@@ -2352,7 +2417,306 @@ function rr # scp -3 remote ($SV) -> remote ($DST), 로컬 경유 전송 (대상
     }
 }
 
-function rl # ls remote ($SV), 경로 생략 시 $SVDIR 목록, -로 시작하는 인자는 원격 ls 옵션으로 전달
+function Get-TextDisplayWidth {
+    # fnc-ignore
+    # 한글 등 전각 문자는 터미널에서 두 칸을 차지하므로 글자 수 대신 이 폭으로 자리를 맞춘다.
+    param([string]$Text)
+
+    $width = 0
+    foreach ($ch in $Text.ToCharArray()) {
+        $code = [int]$ch
+        if (($code -ge 0x1100 -and $code -le 0x115F) -or
+            ($code -ge 0x2E80 -and $code -le 0xA4CF) -or
+            ($code -ge 0xAC00 -and $code -le 0xD7A3) -or
+            ($code -ge 0xF900 -and $code -le 0xFAFF) -or
+            ($code -ge 0xFE30 -and $code -le 0xFE6F) -or
+            ($code -ge 0xFF00 -and $code -le 0xFF60) -or
+            ($code -ge 0xFFE0 -and $code -le 0xFFE6)) {
+            $width += 2
+        }
+        else {
+            $width += 1
+        }
+    }
+
+    $width
+}
+
+function Get-RemoteEntryStyle {
+    # fnc-ignore
+    # 파일 종류에 맞는 아이콘과 색을 고른다. 색은 lsd와 같은 구성 - 디렉터리 파랑, 실행 초록, 링크 청록, 그 밖은 기본색.
+    param(
+        [string]$Name,
+        [string]$Type = 'file'
+    )
+
+    $esc = [char]27
+    $blue = "$esc[38;2;0;135;255m"     # 디렉터리
+    $green = "$esc[38;2;0;215;0m"      # 실행 파일
+    $cyan = "$esc[38;2;0;215;215m"     # 심볼릭 링크
+    $plain = ''                        # 일반 파일은 터미널 기본색
+
+    switch ($Type) {
+        'dir'    { return @{ Icon = [char]::ConvertFromUtf32(0xF024B); Color = $blue } }
+        'link'   { return @{ Icon = [char]::ConvertFromUtf32(0xF0337); Color = $cyan } }
+        'fifo'   { return @{ Icon = [char]::ConvertFromUtf32(0xF0337); Color = $plain } }
+        'socket' { return @{ Icon = [char]::ConvertFromUtf32(0xF0337); Color = $plain } }
+    }
+
+    $color = if ($Type -eq 'exec') { $green } else { $plain }
+    $ext = [IO.Path]::GetExtension($Name).TrimStart('.').ToLower()
+
+    # 아이콘만 확장자로 구분한다 (색은 종류로만).
+    $icon = switch ($ext) {
+        { $_ -in 'zip', 'gz', 'tgz', 'tar', 'bz2', 'xz', 'zst', '7z', 'rar', 'jar', 'war', 'rpm', 'deb' } { [char]::ConvertFromUtf32(0xF410); break }
+        { $_ -in 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'svg', 'ico', 'webp', 'mp4', 'avi', 'mkv' }          { [char]::ConvertFromUtf32(0xF1C5); break }
+        { $_ -in 'c', 'h', 'cpp', 'hpp', 'cc', 'cs', 'py', 'js', 'ts', 'go', 'rs', 'java', 'rb', 'php', 'pl', 'lua', 'sql', 'ps1', 'psm1' } { [char]::ConvertFromUtf32(0xF1C9); break }
+        { $_ -in 'sh', 'bash', 'zsh', 'ksh', 'run' }                                                      { [char]::ConvertFromUtf32(0xF489); break }
+        { $_ -in 'conf', 'cfg', 'ini', 'yaml', 'yml', 'json', 'xml', 'toml', 'properties', 'env', 'service' } { [char]::ConvertFromUtf32(0xF0493); break }
+        'pdf'                                                                                             { [char]::ConvertFromUtf32(0xF1C1); break }
+        { $_ -in 'log', 'out', 'err', 'md', 'txt', 'rst', 'csv', 'doc', 'docx', 'xls', 'xlsx' }           { [char]::ConvertFromUtf32(0xF0219); break }
+        default                                                                                           { $null }
+    }
+
+    if (-not $icon) {
+        $icon = if ($Type -eq 'exec') { [char]::ConvertFromUtf32(0xF489) } else { [char]::ConvertFromUtf32(0xF0214) }
+    }
+
+    return @{ Icon = $icon; Color = $color }
+}
+
+function Write-RemoteListing {
+    # fnc-ignore
+    # 원격에서 받아온 이름 목록(ls -1 -F)에 아이콘·색을 입혀 여러 열로 그린다. (rl 전용 - 서버에는 아무것도 설치하지 않는다)
+    param(
+        [string[]]$Names,
+        [int]$Width = 0
+    )
+
+    $esc = [char]27
+
+    $entries = @(foreach ($raw in $Names) {
+        if ([string]::IsNullOrWhiteSpace($raw)) { continue }
+
+        $name = $raw.TrimEnd()
+        $type = 'file'
+
+        switch -CaseSensitive ($name.Substring($name.Length - 1)) {
+            '/' { $type = 'dir' }
+            '*' { $type = 'exec' }
+            '@' { $type = 'link' }
+            '|' { $type = 'fifo' }
+            '=' { $type = 'socket' }
+        }
+
+        # ls -F가 붙인 종류 표시는 이름에서 떼어낸다.
+        if ($type -ne 'file') { $name = $name.Substring(0, $name.Length - 1) }
+
+        $style = Get-RemoteEntryStyle -Name $name -Type $type
+        [pscustomobject]@{
+            Name  = $name
+            Icon  = $style.Icon
+            Color = $style.Color
+            Width = (Get-TextDisplayWidth $name) + 2   # 아이콘 + 사이 공백
+        }
+    })
+
+    if ($entries.Count -eq 0) { return }
+
+    if ($Width -le 0) { $Width = try { [Console]::WindowWidth } catch { 80 } }
+
+    $cell = ($entries | Measure-Object Width -Maximum).Maximum + 2
+    $cols = [Math]::Max(1, [Math]::Floor($Width / $cell))
+    $rows = [Math]::Ceiling($entries.Count / $cols)
+
+    for ($r = 0; $r -lt $rows; $r++) {
+        $line = ''
+
+        for ($c = 0; $c -lt $cols; $c++) {
+            # ls -C처럼 세로로 먼저 채운다.
+            $i = $c * $rows + $r
+            if ($i -ge $entries.Count) { continue }
+
+            $e = $entries[$i]
+            $reset = if ($e.Color) { "$esc[0m" } else { '' }
+            $line += "{0}{1} {2}{3}" -f $e.Color, $e.Icon, $e.Name, $reset
+            if ($c -lt $cols - 1) { $line += ' ' * [Math]::Max(1, $cell - $e.Width) }
+        }
+
+        [Console]::Write($line.TrimEnd() + "`n")
+    }
+}
+
+function Format-RemoteSize {
+    # fnc-ignore
+    # 바이트를 lsd처럼 "0 B / 28 B / 4.0 KB / 158 MB / 1.5 GB"로 쓰고 크기대에 맞는 색을 고른다. (rl -l 전용)
+    param([long]$Bytes)
+
+    $esc = [char]27
+    $grey = "$esc[38;5;245m"     # 0 바이트
+    $small = "$esc[38;5;229m"    # ~1MB
+    $medium = "$esc[38;5;216m"   # ~1GB
+    $large = "$esc[38;5;172m"    # 1GB 이상
+
+    if ($Bytes -le 0) { return @{ Text = '0 B'; Color = $grey } }
+
+    $units = @('B', 'KB', 'MB', 'GB', 'TB')
+    $value = [double]$Bytes
+    $unit = 0
+
+    while ($value -ge 1024 -and $unit -lt ($units.Count - 1)) {
+        $value = $value / 1024
+        $unit++
+    }
+
+    # 10 미만이면 소수 한 자리까지 (lsd와 같은 표기)
+    $text = if ($unit -eq 0) { "{0:0} {1}" -f $value, $units[$unit] }
+        elseif ($value -lt 10) { "{0:0.0} {1}" -f $value, $units[$unit] }
+        else { "{0:0} {1}" -f $value, $units[$unit] }
+
+    $color = if ($Bytes -lt 1MB) { $small } elseif ($Bytes -lt 1GB) { $medium } else { $large }
+
+    @{ Text = $text; Color = $color }
+}
+
+function Format-RemotePermission {
+    # fnc-ignore
+    # 권한 문자열에 lsd와 같은 색을 입힌다 - 종류 문자는 파랑, r 진초록, w 노랑, x 빨강, 없음은 회색. (rl -l 전용)
+    param([string]$Permission)
+
+    $esc = [char]27
+    $blue = "$esc[34m"
+    $read = "$esc[38;5;28m"
+    $write = "$esc[33m"
+    $exec = "$esc[31m"
+    $none = "$esc[38;5;245m"
+    $reset = "$esc[0m"
+
+    $out = ''
+
+    for ($i = 0; $i -lt $Permission.Length; $i++) {
+        $ch = $Permission[$i]
+
+        # 첫 글자는 파일 종류. lsd처럼 일반 파일은 점으로 보여준다.
+        if ($i -eq 0) {
+            $shown = if ($ch -eq '-') { '.' } else { $ch }
+            $out += "$blue$shown$reset"
+            continue
+        }
+
+        $color = switch ($ch) {
+            'r' { $read; break }
+            'w' { $write; break }
+            'x' { $exec; break }
+            's' { $exec; break }
+            'S' { $exec; break }
+            't' { $exec; break }
+            'T' { $exec; break }
+            default { $none }
+        }
+
+        $out += "$color$ch$reset"
+    }
+
+    $out
+}
+
+function Format-RemoteDate {
+    # fnc-ignore
+    # 수정 시각을 "2026-09-21 월 17:18:47"로 쓰고 lsd처럼 최근일수록 밝은 초록으로 표시한다. (rl -l 전용)
+    param([datetime]$Date)
+
+    $esc = [char]27
+    $age = (Get-Date) - $Date
+
+    $color = if ($age.TotalHours -lt 1) { "$esc[38;5;40m" }
+        elseif ($age.TotalDays -lt 1) { "$esc[38;5;42m" }
+        else { "$esc[38;5;36m" }
+
+    $day = '일월화수목금토'[[int]$Date.DayOfWeek]
+
+    @{ Text = ("{0:yyyy-MM-dd} {1} {0:HH:mm:ss}" -f $Date, $day); Color = $color }
+}
+
+function Write-RemoteLongListing {
+    # fnc-ignore
+    # 원격 ls -l 결과를 lsd -al과 같은 색 구성으로 다시 그린다. (rl -l 전용, 형식이 다르면 받은 줄을 그대로 출력)
+    param([string[]]$Lines)
+
+    $esc = [char]27
+    $reset = "$esc[0m"
+    $dim = "$esc[38;5;245m"
+
+    # ls -l 한 줄: 권한 링크수 소유자 그룹 크기 날짜_시각 이름
+    $pattern = '^(?<perm>[bcdlps-][rwxsStT-]{9}[.+@]?)\s+(?<links>\d+)\s+(?<user>\S+)\s+(?<group>\S+)\s+(?<size>\d+)\s+(?<date>\d{4}-\d{2}-\d{2})_(?<time>\d{2}:\d{2}:\d{2})\s+(?<name>.*)$'
+
+    $rows = @()
+    $raw = @()
+
+    foreach ($line in $Lines) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        if ($line -match '^total\s') { continue }          # lsd는 합계 줄을 쓰지 않는다
+
+        $m = [regex]::Match($line, $pattern)
+        if (-not $m.Success) {
+            $raw += $line
+            continue
+        }
+
+        $perm = $m.Groups['perm'].Value
+        $name = $m.Groups['name'].Value
+        $target = ''
+
+        # 심볼릭 링크는 "이름 -> 대상" 형태로 온다.
+        if ($perm[0] -eq 'l' -and $name -match '^(?<n>.*?) -> (?<t>.*)$') {
+            $target = $Matches['t']
+            $name = $Matches['n']
+        }
+
+        $type = switch ($perm[0]) {
+            'd' { 'dir'; break }
+            'l' { 'link'; break }
+            'p' { 'fifo'; break }
+            's' { 'socket'; break }
+            default { if ($perm -match '^.{1,3}x') { 'exec' } else { 'file' } }
+        }
+
+        $style = Get-RemoteEntryStyle -Name $name -Type $type
+        $size = Format-RemoteSize -Bytes ([long]$m.Groups['size'].Value)
+        $stamp = [datetime]::ParseExact(("{0} {1}" -f $m.Groups['date'].Value, $m.Groups['time'].Value), 'yyyy-MM-dd HH:mm:ss', $null)
+        $date = Format-RemoteDate -Date $stamp
+
+        $rows += [pscustomobject]@{
+            Perm   = $perm
+            Size   = $size
+            Date   = $date
+            Icon   = $style.Icon
+            Color  = $style.Color
+            Name   = $name
+            Target = $target
+        }
+    }
+
+    foreach ($line in $raw) { Write-Host $line }
+    if ($rows.Count -eq 0) { return }
+
+    $sizeWidth = ($rows | ForEach-Object { $_.Size.Text.Length } | Measure-Object -Maximum).Maximum
+
+    foreach ($row in $rows) {
+        $nameText = if ($row.Color) { "{0}{1} {2}$reset" -f $row.Color, $row.Icon, $row.Name } else { "{0} {1}" -f $row.Icon, $row.Name }
+        if ($row.Target) { $nameText += " $dim-> $($row.Target)$reset" }
+
+        [Console]::Write(("{0}  {1}{2}$reset  {3}{4}$reset  {5}`n" -f
+            (Format-RemotePermission -Permission $row.Perm),
+            $row.Size.Color,
+            $row.Size.Text.PadLeft($sizeWidth),
+            $row.Date.Color,
+            $row.Date.Text,
+            $nameText))
+    }
+}
+
+function rl # ls remote ($SV), 경로 생략 시 $SVDIR 목록. 기본은 색상 짧은 목록, -l이면 상세 목록 (-a는 항상 포함)
 {
     # param으로 받으면 -t, -r 같은 ls 옵션이 PowerShell 매개변수로 해석되므로 $args를 직접 나눈다.
     $options = @()
@@ -2395,16 +2759,77 @@ function rl # ls remote ($SV), 경로 생략 시 $SVDIR 목록, -로 시작하�
     }
 
     # 다른 명령으로 넘길 때(rl | sls log)는 색상 코드가 섞이지 않게 끈다.
-    $color = if ($MyInvocation.PipelinePosition -lt $MyInvocation.PipelineLength) { '--color=never' } else { '--color=always' }
-    $remoteCmd = (@('ls', '-alh', $color) + $options + $quoted) -join ' '
+    $piped = $MyInvocation.PipelinePosition -lt $MyInvocation.PipelineLength
+    $color = if ($piped) { '--color=never' } else { '--color=always' }
 
-    Write-Host ("list: {0}:{1} ({2}:{3})" -f $global:SV, ($shown -join ' '), $global:SVIP, $global:SVPORT) -ForegroundColor Green
+    # -a는 항상. -l(-la, --long 등 포함)을 준 경우에만 상세 목록으로 본다 (-h로 읽기 쉬운 크기).
+    $isLong = @($options | Where-Object { $_ -cmatch '^-[A-Za-z]*l' -or $_ -eq '--long' }).Count -gt 0
+
+    # 짧은 목록은 서버 색상(LS_COLORS)에 기대지 않고 이름만 받아 이 PC에서 아이콘·색을 입혀 그린다.
+    # (갓 설치한 서버에서도 똑같이 보이도록 - 서버에는 아무것도 설치하지 않는다)
+    $renderLocal = -not $piped
+
+    $remoteCmd = if ($isLong) {
+        # 상세 목록도 색은 이 PC에서 입힌다. 시각은 파싱하기 좋게 고정 형식으로 받는다.
+        if ($piped) {
+            (@('ls', '-a', '-h', $color) + $options + $quoted) -join ' '
+        }
+        else {
+            # 사용자가 이미 -l 계열을 줬으므로 중복해서 붙이지 않는다. (lsd식 --long은 ls가 모르므로 -l로 바꾼다)
+            $lsOptions = @($options | ForEach-Object { if ($_ -eq '--long') { '-l' } else { $_ } })
+            (@('ls', '-a') + $lsOptions + @('--color=never', '--time-style=+%Y-%m-%d_%H:%M:%S') + $quoted) -join ' '
+        }
+    }
+    elseif ($piped) {
+        (@('ls', '-a', '--color=never') + $options + @('-1') + $quoted) -join ' '
+    }
+    else {
+        # 우리 옵션을 뒤에 두어 사용자가 준 -C/-1/--color 보다 우선하게 한다.
+        (@('ls', '-a') + $options + @('-1', '-F', '--color=never') + $quoted) -join ' '
+    }
+
+    # 어느 서버의 어느 경로인지가 한눈에 들어오도록 서버:경로는 굵은 코랄, 접속 정보는 흐리게 쓴다.
+    $esc = [char]27
+    $head = "$esc[1;38;2;231;111;81m"
+    $sub = "$esc[38;5;245m"
+    Write-Host ("{0}list:$esc[0m {1}{2}:{3}$esc[0m  {0}({4}:{5})$esc[0m" -f $sub, $head, $global:SV, ($shown -join ' '), $global:SVIP, $global:SVPORT)
 
     # config의 Host * RemoteCommand와 충돌하지 않게 무효화하고, 한글 파일명이 깨지지 않게 조회 중에만 UTF-8로 받는다.
     $prevEncoding = [Console]::OutputEncoding
     try {
         [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-        & ssh -o BatchMode=yes -o ConnectTimeout=5 -o RemoteCommand=none -o RequestTTY=no -p $global:SVPORT $global:SV $remoteCmd
+
+        if ($renderLocal) {
+            $received = @(& ssh -o BatchMode=yes -o ConnectTimeout=5 -o RemoteCommand=none -o RequestTTY=no -p $global:SVPORT $global:SV $remoteCmd)
+            $exit = $LASTEXITCODE
+            $group = [System.Collections.Generic.List[string]]::new()
+
+            foreach ($line in $received) {
+                # 경로를 여러 개 주면 ls가 "경로:" 머리글과 빈 줄로 묶어서 내보낸다.
+                if ([string]::IsNullOrWhiteSpace($line)) { continue }
+
+                if ($paths.Count -gt 1 -and $line.EndsWith(':')) {
+                    if ($group.Count -gt 0) {
+                        if ($isLong) { Write-RemoteLongListing -Lines $group } else { Write-RemoteListing -Names $group }
+                        $group.Clear()
+                    }
+
+                    Write-Host $line -ForegroundColor DarkCyan
+                    continue
+                }
+
+                $group.Add($line)
+            }
+
+            if ($group.Count -gt 0) {
+                if ($isLong) { Write-RemoteLongListing -Lines $group } else { Write-RemoteListing -Names $group }
+            }
+
+            $global:LASTEXITCODE = $exit
+        }
+        else {
+            & ssh -o BatchMode=yes -o ConnectTimeout=5 -o RemoteCommand=none -o RequestTTY=no -p $global:SVPORT $global:SV $remoteCmd
+        }
     }
     finally {
         [Console]::OutputEncoding = $prevEncoding
@@ -2849,7 +3274,9 @@ function ssh-help {
     Add-Cmd "xw"               "해제 (기준이 다시 원격 홈으로 돌아간다)"
 
     Add-Section "목록 조회"
-    Add-Cmd "rl [경로] [옵션]"  "SV의 원격 목록을 ls -alh로 표시 (경로를 생략하면 SVDIR)"
+    Add-Cmd "rl [경로] [옵션]"  "SV의 원격 목록 (경로를 생략하면 SVDIR, 숨김 파일 항상 포함)"
+    Add-Note "기본은 색상 짧은 목록(여러 열), rl -l 이면 상세 목록"
+    Add-Note "아이콘·색은 짧은 목록과 상세 목록 모두 이 PC에서 입힌다 (서버에는 설치할 것이 없다)"
     Add-Note "Tab: SVDIR 안의 파일/디렉터리 후보"
     Add-Note "- 로 시작하는 인자는 ls 옵션: rl logs -t (최신순), rl -S (크기순)"
     Add-Note "rl '*.log' 처럼 와일드카드도 가능 (서버 셸이 펼친다)"

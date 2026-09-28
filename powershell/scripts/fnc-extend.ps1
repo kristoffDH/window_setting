@@ -4,12 +4,12 @@
 # $PROFILE의 fnc는 $PROFILE만 파싱하므로, 이 폴더의 함수까지 이어서 보여주는
 # 확장 함수(fnc-all)를 정의하고 alias로 fnc를 가로챈다.
 #
-# 동작 원리: 이 폴더의 스크립트는 profile.ps1(CurrentUserAllHosts)에서 로드되어
+# 동작 원리: 이 폴더의 스크립트는 script-loader.ps1에서 로드되어
 # $PROFILE보다 먼저 실행된다. 함수 fnc를 재정의하면 $PROFILE이 다시 덮어쓰지만,
 # PowerShell은 alias를 함수보다 우선 해석하므로 alias fnc -> fnc-all은 유지된다.
 # 원본 fnc 함수는 Get-Command -CommandType Function으로 호출 시점에 찾아 실행한다.
 #
-# 폴더 경로는 로더(profile.ps1)가 정의한 전역 $my_scripts_dir을 사용한다.
+# 폴더 경로는 로더(script-loader.ps1)가 정의한 전역 $my_scripts_dir을 사용한다.
 # 이 파일을 로더 없이 단독으로 dot-sourcing한 경우엔 파일 위치로 대체한다.
 if (-not $global:my_scripts_dir) {
     $global:my_scripts_dir = $PSScriptRoot
