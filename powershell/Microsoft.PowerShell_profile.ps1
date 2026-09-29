@@ -294,10 +294,11 @@ function upload-cfg
     cd "C:\Users\hanssak\win_term\window_setting"
     cp $profile ./powershell/
     # 스크립트 로더(script-loader.ps1)와 자동 로드 폴더($my_scripts_dir)의 스크립트도 백업한다.
+    # init-cds.ps1은 장비 내부 이름이 들어 있어 저장소에 올리지 않는다.
     cp $script_loader_file ./powershell/
     if ($global:my_scripts_dir -and (Test-Path $global:my_scripts_dir)) {
         $null = New-Item -ItemType Directory -Force -Path ./powershell/scripts
-        cp (Join-Path $global:my_scripts_dir '*.ps1') ./powershell/scripts/
+        cp (Join-Path $global:my_scripts_dir '*.ps1') ./powershell/scripts/ -Exclude 'init-cds.ps1'
     }
     # oh-my-posh 테마도 같은 저장소의 omp-mytheme 폴더로 복사한다.
     cp $omp_config_file ./omp-mytheme/
@@ -4385,9 +4386,11 @@ function ssh-help {
     Add-Note "다운 확인 -> 응답 재개 -> ssh 포트 열림 -> 로그인 확인 순서로 단계마다 기록을 남긴다"
     Add-Note "원격 셸에서 reboot을 친 뒤 빠져나와 실행한다 - 재부팅 명령을 보내지는 않는다"
     Add-Note "이미 내려간 뒤에 실행하면 복구만 지켜본다. -c 복구되면 바로 접속, -w 단계별 최대 대기(분, 기본 10)"
-    Add-Cmd "d [-r|-l|-u|-d|-g]" "현재 세션을 화면 분할로 복제 (= dup, 기본 -r 우측)"
+    Add-Cmd "d [-r|-l|-u|-d|-g|-t]" "현재 세션을 화면 분할로 복제 (= dup, 기본 -r 우측)"
     Add-Note "-g: 2x2 4분할 (세로 분할 후 양쪽을 가로 분할, 포커스는 원래 pane)"
     Add-Note "새 pane이 SV/DST/SVDIR 선택 상태를 그대로 이어받는다"
+    Add-Note "-t: 지금 탭을 분할 모양·비율째 새 탭으로 복제 - pane마다 SV/DST/SVDIR·경로·제목·탭 색을 옮긴다"
+    Add-Note "-t: 명령 실행 중(ssh 접속 등)인 pane은 상태를 못 읽어 홈 폴더의 빈 pane으로 열린다. 직접 만든 변수는 옮기지 않는다"
     Add-Cmd "ws"               "열린 탭/분할과 각 pane의 SV·경로를 저장했다가 그대로 다시 연다"
     Add-Note "ws (목록) / ws save <이름> [-m 메모] / ws show <이름> / ws load <이름> [-here] / ws rm <이름> / ws rename"
     Add-Note "저장은 새 탭에서 실행한다 - 그 탭은 스냅샷에서 빠진다. 탭 순서·분할 모양·분할 비율까지 복원된다"
@@ -4496,18 +4499,19 @@ function ssh-help {
 # 터미널 세션 복제 (dup) 영역 Start
 #########################################################
 
-function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 우측 | -l 좌측 | -u 상단 | -d 하단 | -g 4분할, 기본 -r)
+function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 우측 | -l 좌측 | -u 상단 | -d 하단 | -g 4분할 | -t 탭 통째로 새 탭에, 기본 -r)
 {
     param(
         [Alias('r')][switch]$Right,
         [Alias('l')][switch]$Left,
         [Alias('u')][switch]$Up,
         [Alias('d')][switch]$Down,
-        [Alias('g')][switch]$Grid
+        [Alias('g')][switch]$Grid,
+        [Alias('t')][switch]$Tab
     )
 
-    if (@($Right, $Left, $Up, $Down, $Grid).Where({ $_ }).Count -gt 1) {
-        Write-Host "사용법: dup [-r|-l|-u|-d|-g]  (하나만, 생략하면 -r 우측, -g는 2x2 4분할)" -ForegroundColor Yellow
+    if (@($Right, $Left, $Up, $Down, $Grid, $Tab).Where({ $_ }).Count -gt 1) {
+        Write-Host "사용법: dup [-r|-l|-u|-d|-g|-t]  (하나만, 생략하면 -r 우측, -g는 2x2 4분할, -t는 지금 탭을 분할째 새 탭으로)" -ForegroundColor Yellow
         return
     }
 
@@ -4517,6 +4521,12 @@ function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 
     }
     if (-not $env:WT_SESSION) {
         Write-Host "Windows Terminal 안에서 실행할 때만 분할할 수 있습니다." -ForegroundColor Yellow
+        return
+    }
+
+    # 탭 복제는 다른 pane의 상태까지 읽어야 해서 작업공간(ws)의 화면 읽기·복원을 그대로 쓴다.
+    if ($Tab) {
+        Copy-WsActiveTab
         return
     }
 
@@ -4591,7 +4601,7 @@ function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 
 }
 
 function d {
-    # alias-fn: 현재 세션을 복제해 화면 분할한다. (= dup, -r/-l/-u/-d/-g 인자 그대로 전달)
+    # alias-fn: 현재 세션을 복제해 화면 분할한다. (= dup, -r/-l/-u/-d/-g/-t 인자 그대로 전달)
     dup @args
 }
 
@@ -5043,7 +5053,11 @@ function Get-WsTerminalLayout {
     #
     # RequestPath를 주면 pane을 읽기 직전에 요청 파일을 다시 만들어 표식을 새로 달게 한다.
     # (프롬프트가 한 번 더 그려지면 제목이 원래대로 돌아가 표식이 사라지기 때문이다)
-    param([string]$SelfMarker, [string]$RequestPath)
+    #
+    # ActiveOnly면 지금 보고 있는 탭만 읽는다(dup -t). 다른 탭을 건드리지 않고 창 크기도 읽지 않는다.
+    # SettleMs를 주면 요청은 여기서 처음 보낸다 - pane이 하나뿐이면 요청 자체를 보내지 않고,
+    # 여럿이면 보낸 뒤 그 시간 동안은 표식이 달린 pane만 받아들인다(표식을 달기 전 제목을 그 pane 것으로 잘못 적지 않게).
+    param([string]$SelfMarker, [string]$RequestPath, [switch]$ActiveOnly, [int]$SettleMs = 0)
 
     Add-Type -AssemblyName UIAutomationClient
     Add-Type -AssemblyName UIAutomationTypes
@@ -5085,8 +5099,11 @@ function Get-WsTerminalLayout {
     $tabsOut = @()
     $selfTab = $activeIndex
     $selfPaneId = 0
+    $readyAt = $null
 
     for ($i = 0; $i -lt $items.Count; $i++) {
+        if ($ActiveOnly -and $i -ne $activeIndex) { continue }
+
         $pattern = $items[$i].GetCurrentPattern($selection)
 
         if (-not $pattern.Current.IsSelected) {
@@ -5123,6 +5140,11 @@ function Get-WsTerminalLayout {
                 $originKey = "{0:0},{1:0}" -f $rect.X, $rect.Y
             }
 
+            if ($SettleMs -gt 0 -and -not $readyAt) {
+                Update-WsRequest -Path $RequestPath
+                $readyAt = (Get-Date).AddMilliseconds($SettleMs)
+            }
+
             # pane 번호는 만든 순서대로 붙고 중간에 빠질 수 있어, 필요한 만큼 번호를 넓혀가며 찾는다.
             $paneId = 0
             $guard = 0
@@ -5157,6 +5179,7 @@ function Get-WsTerminalLayout {
                     # 탭 제목이 아직 이전 pane의 표식이면 바뀔 때까지 더 기다린다.
                     $name = [string]$items[$i].Current.Name
                     if ($name -like 'ws:*' -and $usedMarks.ContainsKey($name)) { continue }
+                    if ($readyAt -and $name -notlike 'ws:*' -and (Get-Date) -lt $readyAt) { continue }
 
                     $mapped[$key] = $true
                     $idByKey[$key] = $target
@@ -5196,6 +5219,11 @@ function Get-WsTerminalLayout {
         }
 
         $tabsOut += [pscustomobject]@{ Index = $i; Title = [string]$items[$i].Current.Name; Panes = $panes }
+    }
+
+    # 지금 탭만 읽었으면 탭을 옮겨 다니지 않았으므로 되돌릴 것이 없다 (pane 포커스는 위에서 되돌렸다).
+    if ($ActiveOnly) {
+        return [pscustomobject]@{ ActiveIndex = $activeIndex; Tabs = $tabsOut; Window = $null }
     }
 
     # 보고 있던 탭과 pane으로 되돌린다.
@@ -5777,7 +5805,8 @@ function Show-WsSnapshot {
 function New-WsPaneInitScript {
     # fnc-ignore
     # 복원한 pane이 프로필을 읽은 뒤 실행할 초기화 스크립트를 만든다. (실행 후 스스로 지운다 - dup과 같은 방식)
-    param([object]$Pane, [string]$Snapshot)
+    # Message를 주면 복원 안내 대신 그 문구를 보여준다. (dup -t)
+    param([object]$Pane, [string]$Snapshot, [string]$Message)
 
     $lines = [System.Collections.Generic.List[string]]::new()
 
@@ -5792,25 +5821,30 @@ function New-WsPaneInitScript {
     }
 
     # 프롬프트(oh-my-posh)가 읽는 환경변수도 같이 맞춘다.
+    # wt로 연 탭은 wt를 실행한 pane의 환경변수를 물려받으므로, 이 pane에 없던 값은 지워야 다른 pane의 값이 섞이지 않는다.
     foreach ($pair in @(@('OMP_SV', 'SV'), @('OMP_SVID', 'SVID'), @('OMP_SVIP', 'SVIP'), @('OMP_SVPORT', 'SVPORT'),
             @('OMP_SVDIR', 'SVDIR'), @('OMP_DST', 'DST'), @('OMP_DSTID', 'DSTID'), @('OMP_DSTIP', 'DSTIP'), @('OMP_DSTPORT', 'DSTPORT'))) {
         $value = [string]$Pane.($pair[1])
         if ($value) { $lines.Add(("`$env:{0} = '{1}'" -f $pair[0], ($value -replace "'", "''"))) }
+        else { $lines.Add(("Remove-Item Env:{0} -ErrorAction SilentlyContinue" -f $pair[0])) }
     }
 
     if ($Pane.Title) {
         $lines.Add(("`$env:OMP_TITLE = '{0}'" -f ([string]$Pane.Title -replace "'", "''")))
         $lines.Add('Write-TabTitleSequence $env:OMP_TITLE')
     }
+    else { $lines.Add('Remove-Item Env:OMP_TITLE -ErrorAction SilentlyContinue') }
 
     if ($Pane.TabColor) {
         $lines.Add(("`$env:OMP_TABCOLOR = '{0}'" -f ([string]$Pane.TabColor -replace "'", "''")))
         $lines.Add('Write-TabColorSequence $env:OMP_TABCOLOR')
     }
+    else { $lines.Add('Remove-Item Env:OMP_TABCOLOR -ErrorAction SilentlyContinue') }
 
     # 실행 중이던 명령은 스냅샷(ws show)에만 남긴다. 새 세션의 히스토리에 밀어 넣는 방법은
     # 프로필이 올라오기 전이라 동작하지 않아서 안내도 하지 않는다.
-    $lines.Add(("Write-Host 'ws: 작업공간 [{0}] 복원' -ForegroundColor DarkCyan" -f ($Snapshot -replace "'", "''")))
+    $text = if ($Message) { $Message } else { "ws: 작업공간 [{0}] 복원" -f $Snapshot }
+    $lines.Add(("Write-Host '{0}' -ForegroundColor DarkCyan" -f ($text -replace "'", "''")))
     $lines.Add('Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue')
 
     $path = Join-Path ([IO.Path]::GetTempPath()) ("ws_{0}.ps1" -f [guid]::NewGuid().ToString('N'))
@@ -5830,7 +5864,7 @@ function Add-WsSplitArgs {
 
     # 새로 만드는 pane에는 뒤쪽(Second) 가지의 첫 pane이 들어간다.
     $leaf = @(Get-WsLeafPanes -Node $Node.Second)[0]
-    $init = New-WsPaneInitScript -Pane $leaf -Snapshot $Context.Snapshot
+    $init = New-WsPaneInitScript -Pane $leaf -Snapshot $Context.Snapshot -Message ([string]$Context.Message)
     $Context.Scripts.Add($init)
 
     $ratio = [Math]::Min(0.95, [Math]::Max(0.05, [double]$Node.Ratio))
@@ -5944,6 +5978,168 @@ function Restore-WsSnapshot {
         catch { Write-Warning ("창 크기·위치를 맞추지 못했습니다: {0}" -f $_.Exception.Message) }
 
         break
+    }
+}
+
+function Copy-WsActiveTab {
+    # fnc-ignore
+    # 지금 탭의 분할 구조·비율과 각 pane의 상태(SV/DST/SVDIR·경로·제목·탭 색)를 읽어 새 탭으로 그대로 연다. (dup -t)
+    # ws save/load와 같은 방법을 쓰되 이 탭만 읽고, 스냅샷 파일은 남기지 않는다.
+    if (-not [IO.Directory]::Exists($global:ws_req_dir)) {
+        $null = [IO.Directory]::CreateDirectory($global:ws_req_dir)
+    }
+
+    # 모아서 지운 뒤에 늦게 답한 pane의 응답 파일이 남을 수 있다. 쌓이지 않게 지난 것을 먼저 치운다.
+    Get-ChildItem -LiteralPath $global:ws_req_dir -Filter 'reply-*.json' -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -lt (Get-Date).AddMinutes(-1) } |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+
+    $id = [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $selfMarker = "ws:{0}" -f $PID
+    $requestPath = Join-Path $global:ws_req_dir ("wsreq-{0}" -f $id)
+    $releasePath = Join-Path $global:ws_req_dir ("wsrel-{0}" -f $id)
+
+    # 이 pane은 명령을 실행 중이라 감시기가 돌지 못한다. 요청이 쌓였다가 끝난 뒤 뒤늦게 처리되지 않게 잠시 끈다.
+    $agent = $global:ws_agent
+    if ($agent) { $agent.EnableRaisingEvents = $false }
+
+    $layout = $null
+    $problem = ''
+    $states = @{}
+
+    try {
+        # 이 pane의 상태는 직접 적는다 (화면에서 찾을 표식도 함께 단다).
+        Invoke-WsPaneRequest -Path $requestPath
+
+        # 표식이 탭 이름에 보여야 내 창을 찾는다. WT가 제목을 반영할 때까지 잠깐 되풀이한다.
+        # 다른 pane에는 탭에 pane이 여럿일 때만 요청을 보낸다 (Get-WsTerminalLayout -SettleMs).
+        $deadline = (Get-Date).AddSeconds(3)
+
+        while (-not $layout -and (Get-Date) -lt $deadline) {
+            try { $layout = Get-WsTerminalLayout -SelfMarker $selfMarker -RequestPath $requestPath -ActiveOnly -SettleMs 1500 }
+            catch { $problem = $_.Exception.Message; break }
+
+            if (-not $layout) { Start-Sleep -Milliseconds 100 }
+        }
+
+        foreach ($reply in @(Get-ChildItem -LiteralPath $global:ws_req_dir -Filter ("reply-{0}-*.json" -f $id) -ErrorAction SilentlyContinue)) {
+            try {
+                $state = Get-Content -LiteralPath $reply.FullName -Raw -Encoding utf8 | ConvertFrom-Json
+                $states[[string]$state.Marker] = $state
+            }
+            catch { }
+
+            Remove-Item -LiteralPath $reply.FullName -Force -ErrorAction SilentlyContinue
+        }
+    }
+    finally {
+        # 다른 pane에 요청을 보냈으면 표식을 되돌리게 하고, 이 pane은 직접 되돌린다.
+        if (Test-Path -LiteralPath $requestPath) {
+            Set-Content -LiteralPath $releasePath -Value $id -Encoding utf8
+        }
+
+        Write-TabTitleSequence ([string]$env:OMP_TITLE)
+        Remove-Item -LiteralPath $requestPath, $releasePath -Force -ErrorAction SilentlyContinue
+
+        if ($agent) { $agent.EnableRaisingEvents = $true }
+    }
+
+    if (-not $layout) {
+        if ($problem) { Write-Error ("화면 구조를 읽지 못했습니다: {0}" -f $problem) }
+        else { Write-Error "내 창을 찾지 못했습니다. (탭 제목을 셸이 바꿀 수 있어야 합니다 - WT 프로필의 suppressApplicationTitle: false)" }
+        return
+    }
+
+    $panes = @(@($layout.Tabs)[0].Panes)
+
+    if ($panes.Count -eq 0) {
+        Write-Error "지금 탭의 pane을 읽지 못했습니다."
+        return
+    }
+
+    $tree = ConvertTo-WsPaneTree -Panes $panes
+    $leaves = @(Get-WsLeafPanes -Node $tree)
+    $used = @{}
+    $missing = @()
+
+    foreach ($leaf in $leaves) {
+        if ($leaf.Name -and $states.ContainsKey($leaf.Name) -and -not $used.ContainsKey($leaf.Name)) {
+            Set-WsPaneState -Leaf $leaf -State $states[$leaf.Name]
+            $used[$leaf.Name] = $true
+        }
+        else {
+            # 상태를 못 읽은 pane은 자리만 맞춘 빈 pane(홈 폴더)으로 연다. 원격 셸이 붙인 제목 같은 것이 고정되지 않게 제목도 넘기지 않는다.
+            Add-Member -InputObject $leaf -NotePropertyName Responded -NotePropertyValue $false -Force
+            $missing += $leaf
+        }
+    }
+
+    $shell = (Get-Process -Id $PID).Path
+
+    $context = [pscustomobject]@{
+        Args     = [System.Collections.Generic.List[string]]::new()
+        Scripts  = [System.Collections.Generic.List[string]]::new()
+        Counter  = 0
+        Shell    = $shell
+        Snapshot = ''
+        Message  = 'dup: 탭을 복제했습니다.'
+    }
+
+    $first = $leaves[0]
+    $init = New-WsPaneInitScript -Pane $first -Message $context.Message
+    $context.Scripts.Add($init)
+
+    $cwd = if ($first.Cwd -and (Test-Path -LiteralPath $first.Cwd)) { [string]$first.Cwd } else { $HOME }
+
+    # --title/--tabColor는 WT가 값을 고정하므로 쓰지 않는다 (ws load와 같은 이유 - 제목·색은 각 pane의 초기화 스크립트가 지정).
+    $context.Args.AddRange([string[]]@('new-tab', '-d', $cwd, $shell, '-NoExit', '-File', $init))
+    Add-WsSplitArgs -Node $tree -PaneId 0 -Context $context
+
+    # 새 탭에서도 명령을 실행한 자리에 해당하는 pane에 포커스를 둔다.
+    # pane 번호는 Add-WsSplitArgs가 분할할 때 매긴 순서와 같다 (첫 pane 0, 분할마다 1씩).
+    if ($leaves.Count -gt 1) {
+        $walk = @{ Counter = 0; Found = -1 }
+        $visit = {
+            param([object]$Node, [int]$PaneId)
+
+            if ($Node.Kind -eq 'pane') {
+                if ($Node.Pane.Name -eq $selfMarker) { $walk.Found = $PaneId }
+                return
+            }
+
+            $walk.Counter++
+            $newId = $walk.Counter
+            & $visit $Node.First $PaneId
+            & $visit $Node.Second $newId
+        }
+
+        & $visit $tree 0
+
+        if ($walk.Found -ge 0) {
+            $context.Args.AddRange([string[]]@(';', 'focus-pane', '-t', ([string]$walk.Found)))
+        }
+    }
+
+    $wtArgs = @($context.Args)
+    & wt -w 0 @wtArgs
+
+    if ($LASTEXITCODE -ne 0) {
+        $context.Scripts | ForEach-Object { Remove-Item -LiteralPath $_ -Force -ErrorAction SilentlyContinue }
+        Write-Error ("탭 복제에 실패했습니다 (exit code: {0})" -f $LASTEXITCODE)
+        return
+    }
+
+    Write-Host ("탭 복제: pane {0}개  ->  새 탭" -f $leaves.Count) -ForegroundColor Green
+
+    if ($missing.Count -gt 0) {
+        Write-Host ("상태를 읽지 못한 pane {0}개 - 홈 폴더의 빈 pane으로 열었습니다." -f $missing.Count) -ForegroundColor Yellow
+
+        foreach ($leaf in $missing) {
+            $label = if ($leaf.Name) { "   (제목: {0})" -f $leaf.Name } else { '' }
+            Write-Host ("  {0} pane{1}" -f (Get-WsPaneSpot -Pane $leaf -All $panes), $label) -ForegroundColor Yellow
+        }
+
+        Write-Host "  명령 실행 중(ssh 접속 등)인 pane은 답할 수 없습니다. 프로필을 바꾼 뒤 열어 둔 pane이면 . `$PROFILE 을 한 번 실행해 주세요." -ForegroundColor DarkCyan
     }
 }
 
