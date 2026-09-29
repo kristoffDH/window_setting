@@ -3549,14 +3549,12 @@ function Format-RemoteLogLine {
     $Line
 }
 
-function rs {
-    # 선택된 SV의 상태를 한 화면으로 요약한다. (가동시간·부하·메모리·디스크·상위 프로세스·접속자 / 원격에는 설치할 것이 없다)
-    param([Alias('n')][int]$Top = 5)
-
-    if (-not (Test-ScpReady)) { return }
+function Get-RemoteStatusCommand {
+    # fnc-ignore
+    # rs가 보낼 원격 명령을 한 줄로 만든다. (여러 줄 문자열은 CR이 섞여 원격 셸이 오해할 수 있어 한 줄로 이어 붙인다)
+    param([int]$Top = 5)
 
     # 갓 설치한 서버에서도 되도록 /proc과 coreutils만 쓴다. 한 번의 접속으로 모두 받아 '@@구간' 표시로 나눈다.
-    # (여러 줄 문자열은 CR이 섞여 원격 셸이 오해할 수 있어 한 줄로 이어 붙인다)
     $segments = @(
         'echo @@host',
         'hostname 2>/dev/null',
@@ -3578,34 +3576,34 @@ function rs {
         'echo @@end'
     )
 
+    $segments -join '; '
+}
+
+function Get-RemoteStatusLines {
+    # fnc-ignore
+    # rs 본문(호스트~접속자)을 색이 들어간 줄 목록으로 만든다. (한 번 출력과 -w 갱신이 같은 그림을 쓰도록 렌더는 여기 한 곳)
+    param([object]$Response)
+
     $esc = [char]27
-    $head = "$esc[1;38;2;231;111;81m"
-    $sub = "$esc[38;5;245m"
     $dim = "$esc[38;5;245m"
     $label = "$esc[38;5;110m"
+    $warn = "$esc[38;2;233;196;106m"
     $reset = "$esc[0m"
     $labelWidth = 12
 
-    function Write-Row {
+    $out = [System.Collections.Generic.List[string]]::new()
+
+    function Add-Row {
         # fnc-ignore
         param([string]$Name, [string]$Value)
         $pad = [Math]::Max(1, $labelWidth - (Get-TextDisplayWidth $Name))
-        Write-Host ("  {0}{1}{2}{3}{4}" -f $label, $Name, $reset, (' ' * $pad), $Value)
-    }
-
-    Write-Host ("{0}status:$esc[0m {1}{2}$esc[0m  {0}({3}:{4})$esc[0m" -f $sub, $head, $global:SV, $global:SVIP, $global:SVPORT)
-
-    $response = Invoke-SvSsh -Command ($segments -join '; ')
-
-    if ($response.ExitCode -ne 0) {
-        Write-Error ("원격 상태 조회 실패 (exit code: {0})" -f $response.ExitCode)
-        return
+        $out.Add(("  {0}{1}{2}{3}{4}" -f $label, $Name, $reset, (' ' * $pad), $Value))
     }
 
     $bucket = @{}
     $section = ''
 
-    foreach ($raw in @($response.Lines)) {
+    foreach ($raw in @($Response.Lines)) {
         $line = [string]$raw
 
         if ($line.StartsWith('@@')) {
@@ -3618,12 +3616,16 @@ function rs {
         $bucket[$section].Add($line.TrimEnd())
     }
 
+    # 구간이 통째로 없으면 $bucket[이름]이 $null이라 @( )로 감싸도 '$null 한 개' 배열이 된다. 여기서 걸러 아래 코드가 터지지 않게 한다.
+    # 앞의 쉼표는 한 줄짜리 구간이 배열에서 풀려 문자열이 되는 것을 막는다(그러면 [0]이 첫 글자가 된다).
+    function Get-Part { param([string]$Name) , @($bucket[$Name] | Where-Object { $null -ne $_ }) }
+
     if (-not $bucket.ContainsKey('end')) {
-        Write-Host "  조회가 중간에 끊겼습니다. 아래 내용은 받은 부분까지입니다." -ForegroundColor Yellow
+        $out.Add(("  {0}조회가 중간에 끊겼습니다. 아래 내용은 받은 부분까지입니다.{1}" -f $warn, $reset))
     }
 
     # ── 호스트 / 커널 ──
-    $hostLines = @($bucket['host'])
+    $hostLines = Get-Part 'host'
     $hostName = if ($hostLines.Count -gt 0) { $hostLines[0] } else { '' }
     $pretty = ''
     $kernel = ''
@@ -3635,19 +3637,20 @@ function rs {
 
     if ($hostName -or $pretty -or $kernel) {
         $parts = @($hostName, $pretty, $kernel) | Where-Object { $_ }
-        Write-Row '호스트' ($parts -join " $dim·$reset ")
+        Add-Row '호스트' ($parts -join " $dim·$reset ")
     }
 
     # ── 가동시간 ──
-    $uptimeLine = if (@($bucket['uptime']).Count -gt 0) { @($bucket['uptime'])[0] } else { '' }
+    $uptimeLines = Get-Part 'uptime'
+    $uptimeLine = if ($uptimeLines.Count -gt 0) { $uptimeLines[0] } else { '' }
 
     if ($uptimeLine -match '^\s*([0-9.]+)') {
         $booted = (Get-Date).AddSeconds( - [double]$Matches[1])
-        Write-Row '가동시간' ("{0}  {1}({2:yyyy-MM-dd HH:mm} 부팅){3}" -f (Format-RemoteUptime ([double]$Matches[1])), $dim, $booted, $reset)
+        Add-Row '가동시간' ("{0}  {1}({2:yyyy-MM-dd HH:mm} 부팅){3}" -f (Format-RemoteUptime ([double]$Matches[1])), $dim, $booted, $reset)
     }
 
     # ── 부하 ──
-    $loadLines = @($bucket['load'])
+    $loadLines = Get-Part 'load'
 
     if ($loadLines.Count -gt 0 -and $loadLines[0] -match '^([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)') {
         $one = [double]$Matches[1]
@@ -3661,13 +3664,13 @@ function rs {
             $text = "{0}  {1}(CPU {2}개 · 1분 {3:0}%){4}" -f $text, $dim, $cpu, ($one / $cpu * 100), $reset
         }
 
-        Write-Row '부하' $text
+        Add-Row '부하' $text
     }
 
     # ── 메모리 / 스왑 ──
     $meminfo = @{}
 
-    foreach ($line in @($bucket['mem'])) {
+    foreach ($line in (Get-Part 'mem')) {
         if ($line -match '^(\w+):\s+(\d+)\s*kB') { $meminfo[$Matches[1]] = [long]$Matches[2] }
     }
 
@@ -3681,7 +3684,7 @@ function rs {
         $used = $total - $available
         $ratio = $used / $total
 
-        Write-Row '메모리' ("{0} {1,3:0}%  {2}{3} / {4}{5}" -f (New-RatioBar -Ratio $ratio), ($ratio * 100), $dim, (Format-RemoteSize ($used * 1024)).Text, (Format-RemoteSize ($total * 1024)).Text, $reset)
+        Add-Row '메모리' ("{0} {1,3:0}%  {2}{3} / {4}{5}" -f (New-RatioBar -Ratio $ratio), ($ratio * 100), $dim, (Format-RemoteSize ($used * 1024)).Text, (Format-RemoteSize ($total * 1024)).Text, $reset)
     }
 
     if ($meminfo.ContainsKey('SwapTotal') -and $meminfo['SwapTotal'] -gt 0) {
@@ -3689,7 +3692,7 @@ function rs {
         $swapUsed = $swapTotal - [long]$meminfo['SwapFree']
         $swapRatio = $swapUsed / $swapTotal
 
-        Write-Row '스왑' ("{0} {1,3:0}%  {2}{3} / {4}{5}" -f (New-RatioBar -Ratio $swapRatio), ($swapRatio * 100), $dim, (Format-RemoteSize ($swapUsed * 1024)).Text, (Format-RemoteSize ($swapTotal * 1024)).Text, $reset)
+        Add-Row '스왑' ("{0} {1,3:0}%  {2}{3} / {4}{5}" -f (New-RatioBar -Ratio $swapRatio), ($swapRatio * 100), $dim, (Format-RemoteSize ($swapUsed * 1024)).Text, (Format-RemoteSize ($swapTotal * 1024)).Text, $reset)
     }
 
     # ── 디스크 ──
@@ -3697,7 +3700,7 @@ function rs {
     $skip = @('tmpfs', 'devtmpfs', 'none', 'overlay', 'udev', 'squashfs', 'shm', 'efivarfs', 'ramfs', 'cgroup')
     $disks = [System.Collections.Generic.List[object]]::new()
 
-    foreach ($line in @($bucket['disk'])) {
+    foreach ($line in (Get-Part 'disk')) {
         if ($line -match '^Filesystem') { continue }
 
         # df -P는 "장치 1K블록 사용 가용 사용% 마운트" 6열로 줄바꿈 없이 내보낸다.
@@ -3724,11 +3727,11 @@ function rs {
         $row = $shownDisks[$i]
         $name = if ($i -eq 0) { '디스크' } else { '' }
 
-        Write-Row $name ("{0} {1,3:0}%  {2,-16} {3}{4} / {5}{6}" -f (New-RatioBar -Ratio $row.Ratio), ($row.Ratio * 100), $row.Mount, $dim, (Format-RemoteSize ($row.Used * 1024)).Text, (Format-RemoteSize ($row.Total * 1024)).Text, $reset)
+        Add-Row $name ("{0} {1,3:0}%  {2,-16} {3}{4} / {5}{6}" -f (New-RatioBar -Ratio $row.Ratio), ($row.Ratio * 100), $row.Mount, $dim, (Format-RemoteSize ($row.Used * 1024)).Text, (Format-RemoteSize ($row.Total * 1024)).Text, $reset)
     }
 
     # ── 상위 프로세스 ──
-    $procLines = @($bucket['proc'])
+    $procLines = Get-Part 'proc'
     $shownProc = 0
 
     foreach ($line in $procLines) {
@@ -3746,28 +3749,116 @@ function rs {
         $command = ($cols[3..($cols.Count - 1)] -join ' ')
         $name = if ($shownProc -eq 0) { '프로세스' } else { '' }
 
-        Write-Row $name ("{0,5:0.0}% cpu  {1,4:0.0}% mem  {2}{3,-9}{4} {5}" -f $pcpu, $pmem, $dim, (Format-RemoteSize ($rss * 1024)).Text, $reset, $command)
+        Add-Row $name ("{0,5:0.0}% cpu  {1,4:0.0}% mem  {2}{3,-9}{4} {5}" -f $pcpu, $pmem, $dim, (Format-RemoteSize ($rss * 1024)).Text, $reset, $command)
         $shownProc++
     }
 
     # ── 접속자 ──
-    $whoLines = @($bucket['who'])
+    $whoLines = Get-Part 'who'
 
     if ($whoLines.Count -eq 0) {
-        Write-Row '접속자' ("{0}없음{1}" -f $dim, $reset)
+        Add-Row '접속자' ("{0}없음{1}" -f $dim, $reset)
     }
     else {
         for ($i = 0; $i -lt $whoLines.Count; $i++) {
             $name = if ($i -eq 0) { '접속자' } else { '' }
-            Write-Row $name (($whoLines[$i] -replace '\s+', ' ').Trim())
+            Add-Row $name (($whoLines[$i] -replace '\s+', ' ').Trim())
         }
     }
 
     if ($bucket.Count -eq 0) {
-        Write-Host "  /proc을 읽지 못했습니다. 리눅스 서버가 아닐 수 있습니다." -ForegroundColor Yellow
+        $out.Add(("  {0}/proc을 읽지 못했습니다. 리눅스 서버가 아닐 수 있습니다.{1}" -f $warn, $reset))
     }
+
+    $out.ToArray()
 }
 
+function rs {
+    # 선택된 SV의 상태를 한 화면으로 요약한다. (-n 프로세스 줄 수, -w 초 간격으로 계속 갱신 / 원격에는 설치할 것이 없다)
+    param(
+        [Alias('n')][int]$Top = 5,
+        [Alias('w')][double]$Watch = 0
+    )
+
+    if (-not (Test-ScpReady)) { return }
+
+    $esc = [char]27
+    $head = "$esc[1;38;2;231;111;81m"
+    $sub = "$esc[38;5;245m"
+    $warn = "$esc[38;2;233;196;106m"
+    $command = Get-RemoteStatusCommand -Top $Top
+
+    # 기본: 한 번 조회해서 그대로 출력한다.
+    if ($Watch -le 0) {
+        $response = Invoke-SvSsh -Command $command
+
+        if ($response.ExitCode -ne 0) {
+            Write-Error ("원격 상태 조회 실패 (exit code: {0})" -f $response.ExitCode)
+            return
+        }
+
+        Write-Host ("{0}status:$esc[0m {1}{2}$esc[0m  {0}({3}:{4})$esc[0m" -f $sub, $head, $global:SV, $global:SVIP, $global:SVPORT)
+        foreach ($line in @(Get-RemoteStatusLines -Response $response)) { Write-Host $line }
+        return
+    }
+
+    # -w: 대체 화면(페이저와 같은 방식)에서 같은 자리를 다시 그린다.
+    # 커서 좌표로 되감지 않는 이유는 줄이 접히면(창이 좁으면) 실제 차지한 줄 수가 달라져 화면이 밀리기 때문이다.
+    # 갱신마다 ssh를 새로 맺으므로 간격은 1초 아래로 내리지 않는다.
+    $interval = [Math]::Max(1, $Watch)
+    $screen = -not [Console]::IsOutputRedirected
+    $prevEncoding = [Console]::OutputEncoding
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+    $round = 0
+    $frame = @()
+
+    try {
+        if ($screen) { [Console]::Write("$esc[?1049h$esc[?25l") }
+
+        while ($true) {
+            $round++
+            $response = Invoke-SvSsh -Command $command
+
+            $frame = [System.Collections.Generic.List[string]]::new()
+            $frame.Add(("{0}status:$esc[0m {1}{2}$esc[0m  {0}({3}:{4})$esc[0m  {0}· {5:0.#}초 간격 · {6}회 · {7:HH:mm:ss} · Ctrl+C 종료$esc[0m" -f
+                    $sub, $head, $global:SV, $global:SVIP, $global:SVPORT, $interval, $round, (Get-Date)))
+
+            if ($response.ExitCode -ne 0) {
+                # 재부팅 중일 수 있으니 멈추지 않고 다음 차례에 다시 물어본다.
+                $frame.Add(("  {0}조회 실패 (exit code: {1}) - 다음 갱신에 다시 시도합니다.$esc[0m" -f $warn, $response.ExitCode))
+            }
+            else {
+                foreach ($line in @(Get-RemoteStatusLines -Response $response)) { $frame.Add($line) }
+            }
+
+            # 인코딩을 바꾸면 Console.Out이 새로 만들어지므로 여기서 잡는다. (rt와 같은 이유)
+            $writer = [Console]::Out
+
+            if ($screen) {
+                # 맨 위로 옮겨 한 번에 그린다. 줄 끝 ESC[K는 더 길었던 줄의 잔상을, 끝의 ESC[J는 줄어든 아래쪽을 지운다.
+                # 마지막 줄에 줄바꿈을 넣지 않아야 화면이 한 줄 밀리지 않는다.
+                $writer.Write("$esc[H" + ($frame -join "$esc[K`r`n") + "$esc[K$esc[J")
+            }
+            else {
+                foreach ($line in $frame) { $writer.WriteLine($line) }
+                $writer.WriteLine()
+            }
+
+            $writer.Flush()
+            Start-Sleep -Milliseconds ([int]($interval * 1000))
+        }
+    }
+    finally {
+        if ($screen) {
+            # 원래 화면으로 돌아간 뒤, 마지막으로 본 내용을 한 번만 남긴다.
+            [Console]::Write("$esc[?25h$esc[?1049l")
+            foreach ($line in $frame) { Write-Host $line }
+        }
+
+        [Console]::OutputEncoding = $prevEncoding
+    }
+}
 function rt {
     # SV의 원격 로그를 실시간으로 따라 본다. 색상 강조는 이 PC에서 입힌다. (-n 줄수, -p 패턴, -o 한 번만, 종료 Ctrl+C)
     param(
@@ -4286,8 +4377,10 @@ function ssh-help {
     Add-Note "대상·포트를 생략하면 SVIP와 SVPORT+22/80/443. pt 8080 처럼 포트만 줘도 된다"
     Add-Note "pt 22,80,443 (쉼표) / pt 8000-8010 (범위, 한 번에 64개까지) / -t 타임아웃(ms)"
     Add-Note "ping은 되는데 접속이 안 될 때 sshd가 떴는지 여기서 먼저 확인한다"
-    Add-Cmd "rs"               "SV 상태 요약 - 가동시간·부하·메모리·디스크·상위 프로세스·접속자"
+    Add-Cmd "rs [-w 초]"       "SV 상태 요약 - 가동시간·부하·메모리·디스크·상위 프로세스·접속자"
     Add-Note "/proc과 기본 명령만 쓰므로 갓 설치한 서버에서도 그대로 동작한다 (-n 프로세스 줄수)"
+    Add-Note "rs -w 5 처럼 초를 주면 그 간격으로 같은 자리를 계속 갱신한다 (최소 1초, 종료 Ctrl+C)"
+    Add-Note "갱신 중 조회가 실패하면 멈추지 않고 그 자리에 실패만 표시한다 - 재부팅 지켜볼 때 유용"
     Add-Cmd "rb"               "재부팅 감시 - SV가 내려갔다 올라오는 과정을 한 줄에서 지켜본다"
     Add-Note "다운 확인 -> 응답 재개 -> ssh 포트 열림 -> 로그인 확인 순서로 단계마다 기록을 남긴다"
     Add-Note "원격 셸에서 reboot을 친 뒤 빠져나와 실행한다 - 재부팅 명령을 보내지는 않는다"
