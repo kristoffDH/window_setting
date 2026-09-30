@@ -3566,6 +3566,16 @@ function Get-RemoteStatusCommand {
         'echo @@load',
         'cat /proc/loadavg 2>/dev/null',
         'grep -c ^processor /proc/cpuinfo 2>/dev/null',
+        # 온도: 커널이 내보내는 센서(hwmon, 없으면 thermal_zone)를 읽는다. 센서가 수십 개일 수 있어 cat 대신 셸 내장 read로 읽는다.
+        # 한 줄 형식 - H|hwmon장치|이름|라벨|값|경고기준|위험기준 (값은 1/1000도), Z|존|종류|값
+        'echo @@temp',
+        ('for d in /sys/class/hwmon/hwmon*; do [ -d "$d" ] || continue; n=; [ -r "$d/name" ] && read -r n < "$d/name"; ' +
+            '[ -z "$n" ] && [ -r "$d/device/name" ] && read -r n < "$d/device/name"; ' +
+            'for f in "$d"/temp*_input "$d"/device/temp*_input; do [ -r "$f" ] || continue; b=${f%_input}; t=; l=; x=; c=; read -r t < "$f"; ' +
+            '[ -r "${b}_label" ] && read -r l < "${b}_label"; [ -r "${b}_max" ] && read -r x < "${b}_max"; [ -r "${b}_crit" ] && read -r c < "${b}_crit"; ' +
+            'echo "H|${d##*/}|$n|$l|$t|$x|$c"; done; done 2>/dev/null'),
+        ('for z in /sys/class/thermal/thermal_zone*; do [ -r "$z/temp" ] || continue; y=; t=; [ -r "$z/type" ] && read -r y < "$z/type"; ' +
+            'read -r t < "$z/temp"; echo "Z|${z##*/}|$y|$t"; done 2>/dev/null'),
         'echo @@mem',
         'grep -E "^(MemTotal|MemFree|MemAvailable|Buffers|Cached|SwapTotal|SwapFree):" /proc/meminfo 2>/dev/null',
         'echo @@disk',
@@ -3578,6 +3588,91 @@ function Get-RemoteStatusCommand {
     )
 
     $segments -join '; '
+}
+
+function Format-RemoteTemperature {
+    # fnc-ignore
+    # rs의 온도 줄을 만든다. 센서를 장치 종류(CPU/NVMe/...)별로 묶어 가장 높은 값을 보이고, 경고·위험 기준을 넘으면 색과 글로 표시한다.
+    # 기준은 센서가 알려준 값(_max/_crit)을 쓰고, 없으면 80/90도로 본다. 뜨거운 것부터 늘어놓는다.
+    param([string[]]$Lines)
+
+    $esc = [char]27
+    $dim = "$esc[38;5;245m"
+    $warn = "$esc[38;2;233;196;106m"
+    $bad = "$esc[38;2;255;39;64m"
+    $reset = "$esc[0m"
+
+    # hwmon 장치 이름(또는 thermal_zone 종류)을 알아보기 쉬운 이름으로 바꾼다. 모르는 이름은 그대로 쓴다.
+    $known = @{
+        coretemp = 'CPU'; k10temp = 'CPU'; zenpower = 'CPU'; x86_pkg_temp = 'CPU'; 'cpu-thermal' = 'CPU'; cpu_thermal = 'CPU'
+        nvme = 'NVMe'; drivetemp = '디스크'; acpitz = 'ACPI'; amdgpu = 'GPU'; radeon = 'GPU'; nouveau = 'GPU'
+    }
+
+    function ConvertTo-Celsius {
+        # fnc-ignore
+        # 1/1000도 값을 도로 바꾼다. 읽기 실패·미연결 센서가 내는 0 이하나 말이 안 되는 값은 버린다.
+        param([string]$Raw)
+        $milli = 0L
+        if (-not [long]::TryParse(([string]$Raw).Trim(), [ref]$milli)) { return $null }
+        $value = $milli / 1000.0
+        if ($value -le 0 -or $value -ge 150) { return $null }
+        $value
+    }
+
+    $readings = @(foreach ($line in @($Lines)) {
+            $cols = ([string]$line).Split('|')
+
+            if ($cols[0] -eq 'H' -and $cols.Count -ge 7) { $kind = 'H'; $device = $cols[1]; $name = $cols[2]; $raw = $cols[4]; $high = $cols[5]; $crit = $cols[6] }
+            elseif ($cols[0] -eq 'Z' -and $cols.Count -ge 4) { $kind = 'Z'; $device = $cols[1]; $name = $cols[2]; $raw = $cols[3]; $high = ''; $crit = '' }
+            else { continue }
+
+            $value = ConvertTo-Celsius $raw
+            if ($null -eq $value) { continue }
+
+            $highC = ConvertTo-Celsius $high
+            $critC = ConvertTo-Celsius $crit
+            if ($null -eq $highC) { $highC = 80.0 }
+            if ($null -eq $critC) { $critC = 90.0 }
+
+            $level = if ($value -ge $critC) { 2 } elseif ($value -ge $highC) { 1 } else { 0 }
+            $group = if ($known.ContainsKey($name)) { $known[$name] } elseif ($name -like 'pch_*') { 'PCH' } elseif ($name) { $name } else { $device }
+
+            [pscustomobject]@{ Kind = $kind; Device = $device; Group = $group; Value = $value; Level = $level; Limit = $(if ($level -eq 2) { $critC } else { $highC }) }
+        })
+
+    # hwmon이 하나라도 있으면 그것만 쓴다 (thermal_zone은 같은 센서를 또 보여주는 경우가 많다).
+    if (@($readings | Where-Object { $_.Kind -eq 'H' }).Count -gt 0) { $readings = @($readings | Where-Object { $_.Kind -eq 'H' }) }
+
+    if ($readings.Count -eq 0) {
+        return ("{0}센서 없음 (가상 머신이거나 커널이 온도를 내보내지 않음){1}" -f $dim, $reset)
+    }
+
+    $groups = @($readings | Group-Object Group | ForEach-Object {
+            $top = @($_.Group | Sort-Object Level, Value -Descending)[0]
+
+            [pscustomobject]@{
+                Name    = $_.Name
+                Devices = @($_.Group | Select-Object -ExpandProperty Device -Unique).Count
+                Value   = $top.Value
+                Level   = $top.Level
+                Limit   = $top.Limit
+            }
+        } | Sort-Object Level, Value -Descending)
+
+    $shown = @($groups | Select-Object -First 6)
+
+    $parts = @(foreach ($g in $shown) {
+            $count = if ($g.Devices -gt 1) { "×{0}" -f $g.Devices } else { '' }
+            $text = "{0}{1} {2:0}°C" -f $g.Name, $count, $g.Value
+
+            if ($g.Level -eq 2) { "{0}{1} 위험{2} {3}(기준 {4:0}°C){2}" -f $bad, $text, $reset, $dim, $g.Limit }
+            elseif ($g.Level -eq 1) { "{0}{1} 높음{2} {3}(기준 {4:0}°C){2}" -f $warn, $text, $reset, $dim, $g.Limit }
+            else { $text }
+        })
+
+    if ($groups.Count -gt $shown.Count) { $parts += ("{0}외 {1}개{2}" -f $dim, ($groups.Count - $shown.Count), $reset) }
+
+    $parts -join " $dim·$reset "
 }
 
 function Get-RemoteStatusLines {
@@ -3666,6 +3761,12 @@ function Get-RemoteStatusLines {
         }
 
         Add-Row '부하' $text
+    }
+
+    # ── 온도 ──
+    # 구간 자체가 없으면(응답이 끊긴 경우) 줄을 만들지 않는다. 구간은 있는데 비었으면 '센서 없음'으로 보여준다.
+    if ($bucket.ContainsKey('temp')) {
+        Add-Row '온도' (Format-RemoteTemperature -Lines (Get-Part 'temp'))
     }
 
     # ── 메모리 / 스왑 ──
@@ -4378,7 +4479,9 @@ function ssh-help {
     Add-Note "대상·포트를 생략하면 SVIP와 SVPORT+22/80/443. pt 8080 처럼 포트만 줘도 된다"
     Add-Note "pt 22,80,443 (쉼표) / pt 8000-8010 (범위, 한 번에 64개까지) / -t 타임아웃(ms)"
     Add-Note "ping은 되는데 접속이 안 될 때 sshd가 떴는지 여기서 먼저 확인한다"
-    Add-Cmd "rs [-w 초]"       "SV 상태 요약 - 가동시간·부하·메모리·디스크·상위 프로세스·접속자"
+    Add-Cmd "rs [-w 초]"       "SV 상태 요약 - 가동시간·부하·온도·메모리·디스크·상위 프로세스·접속자"
+    Add-Note "온도는 커널이 내보내는 센서(/sys/class/hwmon)를 CPU·NVMe 등 종류별 최고값으로 보여준다 - 가상 머신은 보통 '센서 없음'"
+    Add-Note "센서가 알려준 기준(없으면 80/90도)을 넘으면 높음(노랑)/위험(빨강). IPMI(BMC)의 흡기·팬 센서는 읽지 않는다"
     Add-Note "/proc과 기본 명령만 쓰므로 갓 설치한 서버에서도 그대로 동작한다 (-n 프로세스 줄수)"
     Add-Note "rs -w 5 처럼 초를 주면 그 간격으로 같은 자리를 계속 갱신한다 (최소 1초, 종료 Ctrl+C)"
     Add-Note "갱신 중 조회가 실패하면 멈추지 않고 그 자리에 실패만 표시한다 - 재부팅 지켜볼 때 유용"
