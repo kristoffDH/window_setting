@@ -1148,6 +1148,9 @@ function Set-SshSelectionVars {
     Set-Item -Path "Env:OMP_${Prefix}" -Value $Entry.Alias
     Set-Item -Path "Env:OMP_${Prefix}PORT" -Value ([string][int]$detail.Port)
 
+    # 작업 서버를 고르면 탭 제목도 그 이름으로 맞춘다 (tt/tb로 직접 정한 제목은 그대로 둔다).
+    if ($Prefix -eq 'SV') { Set-SvAutoTitle -Title $Entry.Alias }
+
     # ssh -G가 알려주는 접속 계정(User). config에 User가 없으면 로컬 계정명이 온다.
     if ([string]::IsNullOrWhiteSpace($detail.User)) {
         Remove-Variable "${Prefix}ID" -Scope Global -ErrorAction SilentlyContinue
@@ -1192,6 +1195,32 @@ function Clear-SshSelectionVars {
         Remove-Variable "$Prefix$suffix" -Scope Global -ErrorAction SilentlyContinue
         Remove-Item "Env:OMP_$Prefix$suffix" -ErrorAction SilentlyContinue
     }
+
+    # SV 이름으로 자동 지정했던 탭 제목은 SV와 함께 거둔다 (직접 정한 제목은 남긴다).
+    if ($Prefix -eq 'SV') { Clear-SvAutoTitle }
+}
+
+function Set-SvAutoTitle {
+    # fnc-ignore
+    # 탭 제목을 자동으로 지정한다. 직접 정한 제목(tt/tb)이 있으면 건드리지 않는다.
+    # 자동으로 넣은 제목인지는 $env:OMP_TITLE_AUTO로 구분한다 - 자동 제목만 다음 선택 때 다시 바뀐다.
+    param([string]$Title)
+
+    if (-not $env:WT_SESSION -or [string]::IsNullOrWhiteSpace($Title)) { return }
+    if ($env:OMP_TITLE -and $env:OMP_TITLE_AUTO -ne '1') { return }
+
+    $env:OMP_TITLE = $Title
+    $env:OMP_TITLE_AUTO = '1'
+    Write-TabTitleSequence $Title
+}
+
+function Clear-SvAutoTitle {
+    # fnc-ignore
+    # 자동으로 지정했던 탭 제목을 지운다 (WT가 프로필 이름으로 되돌린다). 직접 정한 제목이면 그대로 둔다.
+    if ($env:OMP_TITLE_AUTO -ne '1') { return }
+
+    Remove-Item 'Env:OMP_TITLE', 'Env:OMP_TITLE_AUTO' -ErrorAction SilentlyContinue
+    if ($env:WT_SESSION) { Write-TabTitleSequence '' }
 }
 
 # --- 선택기 UI ---
@@ -2845,11 +2874,45 @@ function Resolve-SvRemotePath {
     return "$base/$Path"
 }
 
-function up # scp local -> remote ($SV), 와일드카드(*.tar 등) 지원
+function Resolve-LocalPathList {
+    # fnc-ignore
+    # 쉼표로 나열한 로컬 경로(와일드카드 포함)를 실제 경로 목록으로 펼친다. 하나라도 없으면 알리고 $null을 돌려준다. (up/md5 공용)
+    param([string[]]$Path)
+
+    $resolved = [System.Collections.Generic.List[string]]::new()
+
+    foreach ($item in @($Path)) {
+        # PowerShell은 글롭을 자동 확장하지 않으므로, 와일드카드면 여기서 직접 확장한다.
+        if ([System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($item)) {
+            $found = @(Resolve-Path -Path $item -ErrorAction SilentlyContinue | ForEach-Object { $_.Path })
+
+            if ($found.Count -eq 0) {
+                Write-Error ("패턴과 일치하는 로컬 파일이 없습니다: {0}" -f $item)
+                return $null
+            }
+
+            foreach ($one in $found) { if (-not $resolved.Contains($one)) { $resolved.Add($one) } }
+        }
+        else {
+            if (-not (Test-Path -LiteralPath $item)) {
+                Write-Error ("로컬 경로를 찾지 못했습니다: {0}" -f $item)
+                return $null
+            }
+
+            $one = (Resolve-Path -LiteralPath $item).Path
+            if (-not $resolved.Contains($one)) { $resolved.Add($one) }
+        }
+    }
+
+    # 하나여도 배열로 돌려준다 (호출하는 쪽이 [0]과 .Count를 그대로 쓴다).
+    , $resolved.ToArray()
+}
+
+function up # scp local -> remote ($SV), 와일드카드(*.tar 등)·쉼표로 여러 개(a,b,c) 지원
 {
     param(
         [Parameter(Mandatory = $true, Position = 0)]
-        [string]$LocalPath,
+        [string[]]$LocalPath,
 
         [Parameter(Position = 1)]
         [string]$RemotePath = ''
@@ -2860,24 +2923,10 @@ function up # scp local -> remote ($SV), 와일드카드(*.tar 등) 지원
     # 대상 경로를 생략하면 $SVDIR(미설정이면 원격 홈)로 올린다.
     $RemotePath = Resolve-SvRemotePath -Path $RemotePath
 
-    # PowerShell은 글롭을 자동 확장하지 않으므로, 와일드카드면 여기서 직접 확장해
+    # 여러 개는 쉼표로 나열한다 (up a,b,c [원격]). 공백으로 나열하면 둘째 인자는 지금처럼 원격 경로다.
     # 매칭된 모든 항목을 한 번의 scp 호출로 보낸다.
-    if ([System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($LocalPath)) {
-        $resolved = @(Resolve-Path -Path $LocalPath -ErrorAction SilentlyContinue | ForEach-Object { $_.Path })
-
-        if ($resolved.Count -eq 0) {
-            Write-Error ("패턴과 일치하는 로컬 파일이 없습니다: {0}" -f $LocalPath)
-            return
-        }
-    }
-    else {
-        if (-not (Test-Path -LiteralPath $LocalPath)) {
-            Write-Error ("로컬 경로를 찾지 못했습니다: {0}" -f $LocalPath)
-            return
-        }
-
-        $resolved = @((Resolve-Path -LiteralPath $LocalPath).Path)
-    }
+    $resolved = Resolve-LocalPathList -Path $LocalPath
+    if ($null -eq $resolved) { return }
 
     # $SV는 ssh config 별칭이므로 User/IdentityFile은 config에서 가져오고 포트만 명시한다.
     $scpArgs = @('-P', $global:SVPORT)
@@ -2907,39 +2956,51 @@ function up # scp local -> remote ($SV), 와일드카드(*.tar 등) 지원
     }
 }
 
-function dn # scp remote ($SV) -> $HOME/Downloads
+function dn # scp remote ($SV) -> $HOME/Downloads, 와일드카드('*.log')·쉼표로 여러 개(a,b,c) 지원
 {
     param(
         [Parameter(Mandatory = $true, Position = 0)]
-        [string]$RemotePath
+        [string[]]$RemotePath
     )
 
     if (-not (Test-ScpReady)) { return }
 
-    # $SVDIR이 설정돼 있으면 상대 경로는 그 디렉터리 기준으로 해석한다.
-    $RemotePath = Resolve-SvRemotePath -Path $RemotePath
+    # $SVDIR이 설정돼 있으면 상대 경로는 그 디렉터리 기준으로 해석한다. 여러 개는 쉼표로 나열한다 (dn a,b,c).
+    $paths = @($RemotePath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { Resolve-SvRemotePath -Path $_ })
+
+    if ($paths.Count -eq 0) {
+        Write-Error "받을 원격 경로를 지정해 주세요."
+        return
+    }
 
     $downloadDir = Join-Path $HOME 'Downloads'
-    $source = "{0}:{1}" -f $global:SV, $RemotePath
+    $sources = @($paths | ForEach-Object { "{0}:{1}" -f $global:SV, $_ })
 
-    # 와일드카드(*.tar 등)면 원격 확장은 scp가 수행하므로 디렉터리 검사를 건너뛴다 (여러 파일 다운로드).
-    $hasWildcard = $RemotePath.IndexOfAny([char[]]@('*', '?')) -ge 0
-
-    # 원격 경로가 디렉터리일 때만 -r을 붙인다.
+    # 원격 경로 중 디렉터리가 하나라도 있으면 -r을 붙인다.
+    # 와일드카드(*.tar 등)는 원격 확장을 scp가 하므로 디렉터리 검사를 건너뛴다.
     # 자동완성으로 고른 디렉터리는 ls -p 덕분에 끝에 / 가 붙어 있어 ssh 확인 없이 판별되고,
-    # / 없이 직접 입력한 경로만 원격에서 test -d 로 확인한다.
-    $isDir = -not $hasWildcard -and $RemotePath.EndsWith('/')
+    # / 없이 직접 입력한 경로만 원격에서 test -d 로 확인한다 (여러 개여도 ssh는 한 번).
+    $isDir = $false
+    $tests = @()
 
-    if (-not $isDir -and -not $hasWildcard) {
-        if ($RemotePath -eq '~') {
-            $remoteTest = 'test -d "$HOME"'
+    foreach ($path in $paths) {
+        if ($path.IndexOfAny([char[]]@('*', '?')) -ge 0) { continue }
+
+        if ($path.EndsWith('/')) { $isDir = $true; continue }
+
+        if ($path -eq '~') {
+            $tests += 'test -d "$HOME"'
         }
-        elseif ($RemotePath.StartsWith('~/')) {
-            $remoteTest = 'test -d "$HOME/' + $RemotePath.Substring(2) + '"'
+        elseif ($path.StartsWith('~/')) {
+            $tests += 'test -d "$HOME/' + $path.Substring(2) + '"'
         }
         else {
-            $remoteTest = 'test -d "' + $RemotePath + '"'
+            $tests += 'test -d "' + $path + '"'
         }
+    }
+
+    if (-not $isDir -and $tests.Count -gt 0) {
+        $remoteTest = $tests -join ' || '
 
         & ssh -o BatchMode=yes -o ConnectTimeout=3 -o RemoteCommand=none -o RequestTTY=no -p $global:SVPORT $global:SV $remoteTest 2>$null
         $isDir = ($LASTEXITCODE -eq 0)
@@ -2952,8 +3013,15 @@ function dn # scp remote ($SV) -> $HOME/Downloads
         Write-Host "원격 디렉터리로 감지되어 -r 옵션으로 다운로드합니다." -ForegroundColor DarkCyan
     }
 
-    Write-Host ("download: {0} -> {1} ({2}:{3})" -f $source, $downloadDir, $global:SVIP, $global:SVPORT) -ForegroundColor Green
-    & scp @scpArgs $source $downloadDir
+    if ($sources.Count -eq 1) {
+        Write-Host ("download: {0} -> {1} ({2}:{3})" -f $sources[0], $downloadDir, $global:SVIP, $global:SVPORT) -ForegroundColor Green
+    }
+    else {
+        Write-Host ("download: {0}개 항목 -> {1} ({2}:{3})" -f $sources.Count, $downloadDir, $global:SVIP, $global:SVPORT) -ForegroundColor Green
+        $sources | ForEach-Object { Write-Host ("  {0}" -f $_) -ForegroundColor DarkCyan }
+    }
+
+    & scp @scpArgs @sources $downloadDir
 
     if ($LASTEXITCODE -eq 0) {
         Write-Host "다운로드 완료" -ForegroundColor Green
@@ -2961,6 +3029,148 @@ function dn # scp remote ($SV) -> $HOME/Downloads
     else {
         Write-Error ("다운로드 실패 (exit code: {0})" -f $LASTEXITCODE)
     }
+}
+
+function Invoke-FileHash {
+    # fnc-ignore
+    # md5 / sha256 공용 본체. 명령 이름이 곧 알고리즘 이름이고, 원격에서는 <이름>sum(md5sum, sha256sum)을 쓴다.
+    param(
+        [ValidateSet('md5', 'sha256')]
+        [string]$Algorithm = 'md5',
+
+        [string[]]$Path,
+        [string]$RemotePath = '',
+        [switch]$Remote,
+        [switch]$Help
+    )
+
+    if ($Help -or -not $Path -or ($Path.Count -eq 1 -and $Path[0] -match '^(--?help|/\?|/h)$')) {
+        $other = if ($Algorithm -eq 'md5') { 'sha256' } else { 'md5' }
+
+        Write-Host ("사용법: {0} <파일>[,<파일>...]                    로컬 파일 해시 (와일드카드 *.rpm 가능)" -f $Algorithm) -ForegroundColor Yellow
+        Write-Host ("        {0} <파일>[,<파일>...] -r [원격 디렉터리]   SV에 있는 같은 이름의 파일과 비교" -f $Algorithm) -ForegroundColor Yellow
+        Write-Host "  원격 디렉터리를 생략하면 up이 올리는 곳(SVDIR, 없으면 원격 홈)에서 찾는다." -ForegroundColor DarkCyan
+        Write-Host ("  예: {0} build.tar.gz   /   up build.tar.gz 다음에 {0} build.tar.gz -r   /   {0} *.rpm -r /opt/pkg" -f $Algorithm) -ForegroundColor DarkCyan
+        Write-Host ("  다른 알고리즘은 {0} (쓰는 법은 같다)." -f $other) -ForegroundColor DarkCyan
+        return
+    }
+
+    $files = Resolve-LocalPathList -Path $Path
+    if ($null -eq $files) { return }
+
+    $files = @($files | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+
+    if ($files.Count -eq 0) {
+        Write-Error "해시를 구할 파일이 없습니다. (디렉터리는 대상이 아닙니다)"
+        return
+    }
+
+    # 원격 디렉터리를 적으면 -r을 생략해도 비교한다.
+    $compare = $Remote -or $PSBoundParameters.ContainsKey('RemotePath')
+    if ($compare -and -not (Test-ScpReady)) { return }
+
+    # 리눅스의 md5sum 출력과 눈으로 맞춰 보기 쉽게 소문자로 적는다.
+    $local = [ordered]@{}
+    foreach ($file in $files) {
+        $local[$file] = (Get-FileHash -LiteralPath $file -Algorithm $Algorithm.ToUpper()).Hash.ToLower()
+    }
+
+    if (-not $compare) {
+        foreach ($file in $files) { "{0}  {1}" -f $local[$file], (Split-Path -Leaf $file) }
+        return
+    }
+
+    # 원격에서는 같은 이름의 파일을 찾는다. 기준 디렉터리는 up과 같다 (SVDIR, 없으면 원격 홈).
+    $dir = Resolve-SvRemotePath -Path $RemotePath
+    if (-not $dir.EndsWith('/')) { $dir += '/' }
+
+    # 원격 셸이 공백 경로를 쪼개지 않게 따옴표로 감싼다. ~는 따옴표 안에서 펼쳐지지 않아 $HOME으로 바꾼다. (rt와 같은 규칙)
+    $quoted = foreach ($file in $files) {
+        $full = $dir + (Split-Path -Leaf $file)
+        if ($full.StartsWith('~/')) { '"$HOME' + $full.Substring(1) + '"' } else { '"' + $full + '"' }
+    }
+
+    $response = Invoke-SvSsh -Command ("{0}sum -- {1}" -f $Algorithm, (@($quoted) -join ' ')) -IncludeError
+
+    # 출력은 '<해시>  <경로>' 꼴이다. 없는 파일은 오류 줄로 오므로 해시 줄만 골라 이름으로 찾는다.
+    # (변수 이름은 대소문자를 가리지 않는다 - $remote로 지으면 -Remote 스위치와 같은 변수가 된다)
+    $remoteHash = @{}
+    foreach ($line in @($response.Lines)) {
+        if ([string]$line -match '^\\?([0-9a-fA-F]{32,64})\s+\*?(.+)$') {
+            $remoteHash[($Matches[2].Trim() -replace '^.*/', '')] = $Matches[1].ToLower()
+        }
+    }
+
+    $esc = [char]27
+    $head = "$esc[1;38;2;231;111;81m"
+    $sub = "$esc[38;5;245m"
+
+    Write-Host ("{0}{1}:$esc[0m {2}{3}:{4}$esc[0m  {0}({5}:{6})$esc[0m" -f $sub, $Algorithm, $head, $global:SV, $dir, $global:SVIP, $global:SVPORT)
+
+    if ($remoteHash.Count -eq 0 -and $response.ExitCode -ne 1) {
+        Write-Error ("원격 해시를 구하지 못했습니다 (exit code: {0}) {1}" -f $response.ExitCode, (@($response.Lines) -join ' '))
+        return
+    }
+
+    $same = 0
+    $diff = 0
+    $gone = 0
+
+    foreach ($file in $files) {
+        $name = Split-Path -Leaf $file
+
+        if (-not $remoteHash.ContainsKey($name)) {
+            $gone++
+            Write-Host ("  없음    {0}   {1}(원격에 파일이 없습니다)$esc[0m" -f $name, $sub) -ForegroundColor Yellow
+        }
+        elseif ($remoteHash[$name] -eq $local[$file]) {
+            $same++
+            Write-Host ("  일치    {0}{1}$esc[0m  {2}" -f $sub, $local[$file], $name) -ForegroundColor Green
+        }
+        else {
+            $diff++
+            Write-Host ("  불일치  {0}" -f $name) -ForegroundColor Red
+            Write-Host ("          {0}로컬 {1}$esc[0m" -f $sub, $local[$file])
+            Write-Host ("          {0}원격 {1}$esc[0m" -f $sub, $remoteHash[$name])
+        }
+    }
+
+    if ($files.Count -gt 1) {
+        $color = if ($diff -or $gone) { 'Yellow' } else { 'Green' }
+        Write-Host ("결과: 일치 {0} / 불일치 {1} / 원격에 없음 {2}" -f $same, $diff, $gone) -ForegroundColor $color
+    }
+}
+
+function md5 {
+    # 로컬 파일의 MD5를 구한다. -r이면 SV에 있는 같은 이름의 파일과 비교한다. (쉼표·와일드카드로 여러 개, SHA256은 sha256, -h 사용법)
+    param(
+        [Parameter(Position = 0)]
+        [string[]]$Path,
+
+        [Parameter(Position = 1)]
+        [string]$RemotePath,
+
+        [Alias('r')][switch]$Remote,
+        [Alias('h')][switch]$Help
+    )
+
+    Invoke-FileHash -Algorithm md5 @PSBoundParameters
+}
+
+function sha256 {
+    # 로컬 파일의 SHA256을 구한다. -r이면 SV에 있는 같은 이름의 파일과 비교한다. (쉼표·와일드카드로 여러 개, MD5는 md5, -h 사용법)
+    param(
+        [Parameter(Position = 0)]
+        [string[]]$Path,
+
+        [Parameter(Position = 1)]
+        [string]$RemotePath,
+
+        [Alias('r')][switch]$Remote,
+        [Alias('h')][switch]$Help
+    )
+
+    Invoke-FileHash -Algorithm sha256 @PSBoundParameters
 }
 
 function rr # scp -3 remote ($SV) -> remote ($DST), 로컬 경유 전송 (대상 선택: sd)
@@ -3860,20 +4070,121 @@ function rs {
         [Console]::OutputEncoding = $prevEncoding
     }
 }
+# rt로 본 로그 경로를 기억해 두는 파일. 한 줄에 'SV<TAB>경로<TAB>시각'을 덧붙이기만 한다
+# (여러 pane이 동시에 기록해도 서로 덮어쓰지 않는다). 이 PC에만 남고 저장소에는 올라가지 않는다.
+$global:rt_recent_file = Join-Path (Split-Path -Parent $PROFILE.CurrentUserCurrentHost) 'rt-recent.txt'
+
+function Add-RtRecent {
+    # fnc-ignore
+    # 방금 본 로그 경로를 기록한다. 파일이 길어지면 서버·경로별 마지막 기록만 남기고 줄인다.
+    param([string]$Sv, [string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Sv) -or [string]::IsNullOrWhiteSpace($Path)) { return }
+
+    try {
+        $line = "{0}`t{1}`t{2}" -f $Sv, $Path, (Get-Date).ToString('yyyy-MM-dd HH:mm')
+        Add-Content -LiteralPath $global:rt_recent_file -Value $line -Encoding utf8
+
+        $all = @(Get-Content -LiteralPath $global:rt_recent_file -Encoding utf8)
+
+        if ($all.Count -gt 300) {
+            $keep = @(Get-RtRecent | Select-Object -First 100)
+            [array]::Reverse($keep)
+            Set-Content -LiteralPath $global:rt_recent_file -Encoding utf8 -Value @($keep | ForEach-Object { "{0}`t{1}`t{2}" -f $_.SV, $_.Path, $_.At })
+        }
+    }
+    catch { }
+}
+
+function Get-RtRecent {
+    # fnc-ignore
+    # 기억해 둔 로그 기록을 최근 순으로 돌려준다. 같은 서버·경로는 마지막 기록 하나만 남긴다.
+    if (-not (Test-Path -LiteralPath $global:rt_recent_file)) { return }
+
+    $lines = @(Get-Content -LiteralPath $global:rt_recent_file -Encoding utf8 -ErrorAction SilentlyContinue)
+    $seen = @{}
+
+    for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+        $parts = ([string]$lines[$i]).Split("`t")
+        if ($parts.Count -lt 2 -or -not $parts[0] -or -not $parts[1]) { continue }
+
+        $key = "{0}`t{1}" -f $parts[0], $parts[1]
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+
+        [pscustomobject]@{ SV = $parts[0]; Path = $parts[1]; At = $(if ($parts.Count -gt 2) { $parts[2] } else { '' }) }
+    }
+}
+
+function Get-RtRecentChoices {
+    # fnc-ignore
+    # rt 선택 화면에 올릴 후보. 지금 서버에서 본 로그를 먼저, 다른 서버에서만 본 경로를 그 뒤에 놓는다.
+    param([string]$Sv, [int]$Max = 15)
+
+    $all = @(Get-RtRecent)
+    $mine = @($all | Where-Object { $_.SV -eq $Sv })
+    $taken = @{}
+    foreach ($item in $mine) { $taken[$item.Path] = $true }
+
+    $others = foreach ($item in $all) {
+        if ($item.SV -eq $Sv -or $taken.ContainsKey($item.Path)) { continue }
+        $taken[$item.Path] = $true
+        $item
+    }
+
+    @($mine) + @($others | Where-Object { $_ }) | Select-Object -First $Max
+}
+
+function Test-RtInteractive {
+    # fnc-ignore
+    # 선택 화면을 띄워도 되는지(키 입력을 받을 수 있는지) 확인한다. (시험 때 이 함수만 바꿔 끼운다)
+    -not [Console]::IsInputRedirected
+}
+
 function rt {
-    # SV의 원격 로그를 실시간으로 따라 본다. 색상 강조는 이 PC에서 입힌다. (-n 줄수, -p 패턴, -o 한 번만, 종료 Ctrl+C)
+    # SV의 원격 로그를 실시간으로 따라 본다. 경로를 생략하면 최근에 본 로그에서 고른다. (-n 줄수, -p 패턴, -o 한 번만, -h 사용법, 종료 Ctrl+C)
     param(
         [Parameter(Position = 0)]
         [string]$Path,
 
         [Alias('n')][int]$Lines = 50,
         [Alias('p')][string]$Pattern,
-        [Alias('o')][switch]$Once
+        [Alias('o')][switch]$Once,
+        [Alias('h')][switch]$Help
     )
 
     if ([string]::IsNullOrWhiteSpace($Path)) {
-        Write-Host "사용법: rt <원격 로그경로> [-n 줄수] [-p 패턴] [-o 한 번만]   (Tab 자동완성, 종료 Ctrl+C)" -ForegroundColor Yellow
-        Write-Host "  예: rt /var/log/messages   /   rt app.log -p error   /   rt /var/log/secure -n 200 -o" -ForegroundColor DarkCyan
+        # 본 적이 있는 로그가 있으면 목록에서 고른다. 없거나(-h 포함) 키 입력을 못 받는 상황이면 사용법을 보여준다.
+        $choices = @()
+
+        if (-not $Help -and -not [string]::IsNullOrWhiteSpace([string]$global:SV) -and (Test-RtInteractive)) {
+            $choices = @(Get-RtRecentChoices -Sv ([string]$global:SV))
+        }
+
+        if ($choices.Count -eq 0) {
+            Write-Host "사용법: rt <원격 로그경로> [-n 줄수] [-p 패턴] [-o 한 번만]   (Tab 자동완성, 종료 Ctrl+C)" -ForegroundColor Yellow
+            Write-Host "  예: rt /var/log/messages   /   rt app.log -p error   /   rt /var/log/secure -n 200 -o" -ForegroundColor DarkCyan
+            Write-Host "  한 번 본 로그는 기억해 둔다 - 다음부터는 rt 만 입력해 목록에서 고를 수 있다 (옵션은 그대로: rt -p error)." -ForegroundColor DarkCyan
+            return
+        }
+
+        $esc = [char]27
+        $rows = foreach ($item in $choices) {
+            $where = if ($item.SV -eq $global:SV) { $item.At } else { "다른 서버: {0}" -f $item.SV }
+            "{0}  $esc[90m({1})$esc[0m" -f $item.Path, $where
+        }
+
+        $index = Select-TabPickerItem -Header ("최근에 본 로그 - {0}" -f $global:SV) -Rows @($rows) -Hint '↑↓ 이동 | Enter 선택 | Esc/q 취소'
+
+        if ($index -lt 0) {
+            Write-Host "취소했습니다." -ForegroundColor DarkCyan
+            return
+        }
+
+        $Path = [string]$choices[$index].Path
+    }
+    elseif ($Help) {
+        Write-Host "사용법: rt [원격 로그경로] [-n 줄수] [-p 패턴] [-o 한 번만]   (경로를 생략하면 최근에 본 로그에서 선택)" -ForegroundColor Yellow
         return
     }
 
@@ -3921,8 +4232,18 @@ function rt {
         # 인코딩을 바꾸면 [Console]::Out이 다시 만들어지므로 바꾼 뒤에 잡고, 줄마다 바로 내보내 실시간성은 유지한다.
         $writer = [Console]::Out
 
+        # 실제로 내용이 나온 로그만 기억한다 (오타 난 경로가 목록에 쌓이지 않게). SVDIR과 무관하게 다시 열리도록
+        # 홈 기준 상대 경로는 ~/ 를 붙여 적는다. Ctrl+C로 끝나므로 첫 줄을 받는 순간에 기록한다.
+        $remembered = $false
+        $rememberAs = if ($resolved.StartsWith('/') -or $resolved.StartsWith('~')) { $resolved } else { "~/$resolved" }
+
         & ssh -o BatchMode=yes -o ConnectTimeout=5 -o RemoteCommand=none -o RequestTTY=no -p $global:SVPORT $global:SV $remoteCmd 2>&1 |
             ForEach-Object {
+                if (-not $remembered -and ([string]$_) -notmatch '^(tail|ssh|grep): ') {
+                    $remembered = $true
+                    Add-RtRecent -Sv ([string]$global:SV) -Path $rememberAs
+                }
+
                 if ($piped) { [string]$_ } else { $writer.WriteLine((Format-RemoteLogLine -Line ([string]$_))) }
             }
 
@@ -3990,30 +4311,45 @@ function Get-SshRemotePathCompletion {
         [Console]::OutputEncoding = $prevEncoding
     }
 
-    if ($LASTEXITCODE -ne 0 -or -not $items) {
-        return
+    $found = 0
+
+    if ($LASTEXITCODE -eq 0 -and $items) {
+        foreach ($item in $items) {
+            if ($item -in './', '../') { continue }
+            if ($DirOnly -and -not $item.EndsWith('/')) { continue }
+            if ($prefix -and -not $item.StartsWith($prefix, [System.StringComparison]::Ordinal)) { continue }
+
+            # ls -p 덕분에 디렉터리는 끝에 / 가 붙어 이어서 탐색할 수 있다.
+            $full = "$dir$item"
+            $completionText = if ($full -match '\s') { "'$full'" } else { $full }
+            $found++
+
+            [System.Management.Automation.CompletionResult]::new(
+                $completionText,
+                $item,
+                [System.Management.Automation.CompletionResultType]::ProviderItem,
+                $full
+            )
+        }
     }
 
-    foreach ($item in $items) {
-        if ($item -in './', '../') { continue }
-        if ($DirOnly -and -not $item.EndsWith('/')) { continue }
-        if ($prefix -and -not $item.StartsWith($prefix, [System.StringComparison]::Ordinal)) { continue }
-
-        # ls -p 덕분에 디렉터리는 끝에 / 가 붙어 이어서 탐색할 수 있다.
-        $full = "$dir$item"
-        $completionText = if ($full -match '\s') { "'$full'" } else { $full }
+    # 원격에 맞는 후보가 없으면(조회 실패 포함) 입력한 글자를 그대로 돌려준다.
+    # 아무것도 돌려주지 않으면 PowerShell이 로컬 파일 완성으로 넘어가, 원격 경로 자리에 로컬 경로가 들어간다
+    # (예: /Tem 에서 Tab -> 이 PC의 C:\Temp). 빈 입력은 돌려줄 글자가 없어 그대로 둔다.
+    if ($found -eq 0 -and $word) {
+        $keep = if ($word -match '\s') { "'$word'" } else { $word }
 
         [System.Management.Automation.CompletionResult]::new(
-            $completionText,
-            $item,
-            [System.Management.Automation.CompletionResultType]::ProviderItem,
-            $full
+            $keep,
+            $word,
+            [System.Management.Automation.CompletionResultType]::ParameterValue,
+            '원격에 일치하는 경로가 없습니다'
         )
     }
 }
 
-# up은 업로드 대상이므로 디렉터리만, dn은 파일/디렉터리 모두 후보로 보여준다.
-Register-ArgumentCompleter -CommandName up, dn -ParameterName RemotePath -ScriptBlock {
+# up은 업로드 대상이므로 디렉터리만, dn은 파일/디렉터리 모두 후보로 보여준다. (md5/sha256의 비교 대상도 디렉터리)
+Register-ArgumentCompleter -CommandName up, dn, md5, sha256 -ParameterName RemotePath -ScriptBlock {
     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
 
     $sv = Get-Variable SV -Scope Global -ErrorAction SilentlyContinue
@@ -4025,7 +4361,7 @@ Register-ArgumentCompleter -CommandName up, dn -ParameterName RemotePath -Script
     }
 
     Get-SshRemotePathCompletion -HostAlias $sv.Value -Port ([string]$svport.Value) -WordToComplete $wordToComplete `
-        -DirOnly:($commandName -eq 'up') -BaseDir ([string]$global:SVDIR)
+        -DirOnly:($commandName -ne 'dn') -BaseDir ([string]$global:SVDIR)
 }
 
 # rr 첫 인자(원본)는 SV 기준 파일+디렉터리, 둘째 인자(대상)는 DST 기준 디렉터리만 보여준다.
@@ -4343,6 +4679,8 @@ function ssh-help {
     Add-Section "명령"
     Add-Cmd "ss [별칭]"        "작업 서버(SV) 선택. 인자 없으면 목록에서 방향키로 고른다"
     Add-Note "Tab: ssh config의 Host 별칭 자동완성"
+    Add-Note "고르면 탭 제목도 SV 이름으로 바뀐다. tt/tb로 직접 정한 제목이 있으면 그대로 두고, xs로 해제하면 자동 제목도 함께 사라진다"
+    Add-Note "직접 정한 제목을 tt '' 로 되돌리면 다음 ss부터 다시 자동으로 붙는다"
     Add-Cmd "sd [별칭]"        "전송 대상(DST) 선택 - rr 전용이며 up/dn/rl과는 무관"
     Add-Cmd "sb <SV> <DST>"    "SV와 DST를 한 번에 선택 (= ss + sd, 두 인자 모두 Tab 자동완성)"
     Add-Cmd "xs"               "SV 해제 (원격 작업 디렉터리 SVDIR도 함께 해제)"
@@ -4417,7 +4755,9 @@ function ssh-help {
     Add-Note "rl '*.log' 처럼 와일드카드도 가능 (서버 셸이 펼친다)"
 
     Add-Section "로그 보기"
-    Add-Cmd "rt <로그경로>"     "원격 로그를 실시간으로 따라 본다 (tail -F, 종료 Ctrl+C)"
+    Add-Cmd "rt [로그경로]"     "원격 로그를 실시간으로 따라 본다 (tail -F, 종료 Ctrl+C)"
+    Add-Note "경로 없이 rt 만 입력하면 최근에 본 로그 목록에서 고른다 - 지금 서버에서 본 것이 먼저 나온다 (rt -p error 처럼 옵션은 그대로)"
+    Add-Note "내용이 실제로 나온 로그만 기억한다. 기록은 이 PC의 rt-recent.txt (프로필 폴더)"
     Add-Note "ERROR/FATAL 빨강, WARN 노랑, DEBUG/TRACE 흐리게, INFO/NOTICE는 수준 표시만 흐리게"
     Add-Note "줄 맨 앞(또는 시각 뒤)의 수준 표시를 먼저 본다 - Info 줄이 본문의 error 때문에 빨개지지 않는다"
     Add-Note "수준 표시가 없는 줄은 낱말(error/fail/denied 등)로 판단하고, 맨 앞 시각은 흐리게 - 색은 모두 이 PC에서 입힌다"
@@ -4434,16 +4774,21 @@ function ssh-help {
     # ── 4. 파일 전송 ─────────────────────────────────────────────
     Add-Title "[ 4. 파일 전송 ]"
     Add-Cmd "up <로컬> [원격]"  "로컬 -> SV. 원격 경로를 생략하면 SVDIR로 올린다"
-    Add-Note "Tab(2번째 인자): 원격 디렉터리만 후보로 표시"
+    Add-Note "여러 개는 쉼표로: up a.tar,b.tar,c.sh [원격]  (공백으로 띄운 둘째 인자는 항상 원격 경로)"
+    Add-Note "Tab(2번째 인자): 원격 디렉터리만 후보로 표시. 쉼표 뒤에서도 Tab이 그대로 된다"
     Add-Cmd "dn <원격>"        "SV -> 로컬 ~/Downloads"
+    Add-Note "여러 개는 쉼표로: dn a.log,b.log  (한 번의 scp로 받는다)"
     Add-Note "Tab: SVDIR 안의 파일/디렉터리 후보"
+    Add-Cmd "md5 <파일> [-r]"   "로컬 파일 해시. -r이면 SV에 있는 같은 이름의 파일과 비교한다 (SHA256은 sha256)"
+    Add-Note "md5 a.tar,b.tar / md5 *.rpm 처럼 여러 개 가능. 출력은 리눅스 md5sum과 같은 소문자"
+    Add-Note "-r 뒤에 원격 디렉터리를 적을 수 있다. 생략하면 up이 올리는 곳(SVDIR, 없으면 원격 홈)에서 찾는다"
     Add-Cmd "rr <원본> [대상]"  "SV -> DST 서버간 전송 (로컬을 거치는 scp -3)"
     Add-Note "대상을 생략하면 DST의 홈(~/). SV와 DST가 모두 선택돼 있어야 한다"
     Add-Note "Tab: 1번째 인자는 SV 경로, 2번째 인자는 DST 디렉터리"
 
     Add-Section "공통 동작"
     Add-Cmd "디렉터리"          "원격 경로가 디렉터리면 자동으로 -r (재귀 전송)"
-    Add-Cmd "와일드카드"        "up *.tar, dn '*.log' 처럼 여러 파일을 한 번에"
+    Add-Cmd "와일드카드"        "up *.tar, dn '*.log' 처럼 여러 파일을 한 번에 (쉼표 나열과 섞어 써도 된다)"
     Add-Note "원격 와일드카드는 서버 셸이 펼치므로 따옴표로 감싸는 편이 안전하다"
     Add-Cmd "포트"             "config 별칭이 포트를 공급하므로 따로 지정할 필요 없다"
 
@@ -4460,6 +4805,7 @@ function ssh-help {
     Add-Plain "    dn mes<Tab>         # /var/log 안에서 자동완성 -> dn messages"
     Add-Section "패치 파일 올리고 확인하기"
     Add-Plain "    up patch.tar        # sw로 잡아둔 경로로 업로드"
+    Add-Plain "    md5 patch.tar -r    # 올라간 파일이 로컬과 같은지 해시로 확인"
     Add-Plain "    c                   # 같은 서버에 접속해 확인"
     Add-Section "서버에서 서버로 옮기기"
     Add-Plain "    ss srchost          # 원본 서버"
@@ -4475,10 +4821,12 @@ function ssh-help {
     Add-Plain "    rs                  # 올라온 서버 상태 요약"
     Add-Section "장애 로그 확인"
     Add-Plain "    rt /var/log/messages -p error   # error 줄만 실시간으로"
+    Add-Plain "    rt                              # 다음부터는 최근에 본 로그 목록에서 선택"
 
     # ── 6. 문제 해결 ─────────────────────────────────────────────
     Add-Title "[ 6. 자주 겪는 문제 ]"
-    Add-Cmd "자동완성이 로컬 경로" "SV 미선택이거나 키 인증이 안 된 상태 - ss 후 auth 실행"
+    Add-Cmd "자동완성이 로컬 경로" "SV(rr 대상은 DST)를 선택하지 않은 상태 - ss / sd 로 먼저 선택"
+    Add-Cmd "Tab을 눌러도 그대로" "원격에 그 이름으로 시작하는 경로가 없다 (리눅스는 대소문자 구분). 전혀 안 되면 키 인증 문제 - auth 실행"
     Add-Cmd "변수 미설정 안내"    "up/dn/rl은 ss가, rr은 ss + sd가 모두 필요하다"
     Add-Cmd "호스트 키 경고"     "REMOTE HOST IDENTIFICATION HAS CHANGED - auth가 자동 정리한다"
     Add-Note "수동으로 지우려면 del-host <IP> (known_hosts 자동 백업 후 해당 항목 삭제)"
@@ -4546,7 +4894,7 @@ function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 
             $lines.Add(("`$global:{0} = {1}" -f $name, [int]$port.Value))
         }
     }
-    foreach ($name in 'OMP_SV', 'OMP_SVID', 'OMP_SVIP', 'OMP_SVPORT', 'OMP_SVDIR', 'OMP_DST', 'OMP_DSTID', 'OMP_DSTIP', 'OMP_DSTPORT', 'OMP_TITLE', 'OMP_TABCOLOR') {
+    foreach ($name in 'OMP_SV', 'OMP_SVID', 'OMP_SVIP', 'OMP_SVPORT', 'OMP_SVDIR', 'OMP_DST', 'OMP_DSTID', 'OMP_DSTIP', 'OMP_DSTPORT', 'OMP_TITLE', 'OMP_TITLE_AUTO', 'OMP_TABCOLOR') {
         $value = [Environment]::GetEnvironmentVariable($name)
         if ($value) {
             $lines.Add(("`$env:{0} = '{1}'" -f $name, ($value -replace "'", "''")))
@@ -4677,7 +5025,8 @@ function Select-TabPickerItem {
         [string[]]$Rows,
         [int]$StartIndex = 0,
         [scriptblock]$OnMove,
-        [scriptblock]$OnCancel
+        [scriptblock]$OnCancel,
+        [string]$Hint = '↑↓ 이동 (탭에 바로 미리보기) | Enter 적용 | Esc/q 취소'
     )
 
     $esc = [char]27
@@ -4693,7 +5042,7 @@ function Select-TabPickerItem {
             $sb = [System.Text.StringBuilder]::new()
             [void]$sb.Append("$esc[H$esc[2J")
             [void]$sb.Append("$esc[93m$Header$esc[0m`n")
-            [void]$sb.Append("$esc[90m  ↑↓ 이동 (탭에 바로 미리보기) | Enter 적용 | Esc/q 취소$esc[0m`n`n")
+            [void]$sb.Append("$esc[90m  $Hint$esc[0m`n`n")
 
             for ($i = 0; $i -lt $Rows.Count; $i++) {
                 $cursor = if ($i -eq $pos) { "$esc[92m>$esc[0m" } else { ' ' }
@@ -4870,6 +5219,10 @@ function set-tabtitle
 
     Write-TabTitleSequence $Title
 
+    # 직접 정한 제목이므로 자동 표시를 뗀다 - 이후 ss로 서버를 바꿔도 이 제목이 유지된다.
+    # (제목을 기본으로 되돌리면 다음 ss부터 다시 SV 이름이 자동으로 들어간다)
+    Remove-Item 'Env:OMP_TITLE_AUTO' -ErrorAction SilentlyContinue
+
     if ($Title) {
         $env:OMP_TITLE = $Title
         Write-Host ("탭 제목: {0}" -f $Title) -ForegroundColor Green
@@ -4991,6 +5344,7 @@ function Invoke-WsPaneRequest {
         Marker   = $marker
         Session  = [string]$env:WT_SESSION
         Title    = [string]$env:OMP_TITLE
+        TitleAuto = [string]$env:OMP_TITLE_AUTO
         TabColor = [string]$env:OMP_TABCOLOR
         Cwd      = if ($PWD.Provider.Name -eq 'FileSystem') { $PWD.ProviderPath } else { $HOME }
         Cols     = 0
@@ -5318,7 +5672,7 @@ function Set-WsPaneState {
 
     Add-Member -InputObject $Leaf -NotePropertyName Responded -NotePropertyValue $true -Force
 
-    foreach ($nm in 'Pid', 'Title', 'TabColor', 'Cwd', 'Last', 'Cols', 'Rows', 'SV', 'SVID', 'SVIP', 'SVPORT', 'SVDIR', 'DST', 'DSTID', 'DSTIP', 'DSTPORT') {
+    foreach ($nm in 'Pid', 'Title', 'TitleAuto', 'TabColor', 'Cwd', 'Last', 'Cols', 'Rows', 'SV', 'SVID', 'SVIP', 'SVPORT', 'SVDIR', 'DST', 'DSTID', 'DSTIP', 'DSTPORT') {
         Add-Member -InputObject $Leaf -NotePropertyName $nm -NotePropertyValue ([string]$State.$nm) -Force
     }
 }
@@ -5834,6 +6188,10 @@ function New-WsPaneInitScript {
         $lines.Add('Write-TabTitleSequence $env:OMP_TITLE')
     }
     else { $lines.Add('Remove-Item Env:OMP_TITLE -ErrorAction SilentlyContinue') }
+
+    # ss가 자동으로 붙인 제목인지도 그대로 옮긴다 (자동 제목이어야 다음 ss 때 다시 바뀐다).
+    if ($Pane.Title -and [string]$Pane.TitleAuto -eq '1') { $lines.Add("`$env:OMP_TITLE_AUTO = '1'") }
+    else { $lines.Add('Remove-Item Env:OMP_TITLE_AUTO -ErrorAction SilentlyContinue') }
 
     if ($Pane.TabColor) {
         $lines.Add(("`$env:OMP_TABCOLOR = '{0}'" -f ([string]$Pane.TabColor -replace "'", "''")))
