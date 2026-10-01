@@ -6802,15 +6802,53 @@ function Get-FldFrontWindow {
     $Hwnds[0]
 }
 
+function Get-FldTabStripNames {
+    # fnc-ignore
+    # 창의 탭 줄에 보이는 탭 이름(폴더 표시 이름)을 화면 순서대로. 최소화된 창은 탭 줄이 없어 빈 목록
+    param([long]$Hwnd)
+    try {
+        Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+        $cond = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::TabItem)
+        @([Windows.Automation.AutomationElement]::FromHandle([IntPtr]$Hwnd).FindAll([Windows.Automation.TreeScope]::Descendants, $cond) | ForEach-Object { $_.Current.Name })
+    }
+    catch { @() }
+}
+
+function Get-FldScreenOrder {
+    # fnc-ignore
+    # COM은 탭을 연 순서로 돌려주므로 탭을 끌어 옮긴 창은 화면 순서와 다르다(실측) → 탭 줄의 이름 순서대로 다시 늘어놓는다.
+    # 탭 줄에는 경로 없이 이름만 있어 COM의 LocationName과 짝짓고, 같은 이름끼리는 연 순서를 따른다.
+    # 탭 줄을 못 읽거나(최소화된 창) 짝이 안 맞으면 연 순서 그대로 돌려주고 경고한다.
+    param([long]$Hwnd, $Tabs)
+    $Tabs = @($Tabs)
+    $names = @(Get-FldTabStripNames $Hwnd)
+    $left = [Collections.Generic.List[object]]::new()
+    foreach ($t in $Tabs) { $left.Add($t) }
+    $ordered = [Collections.Generic.List[object]]::new()
+    foreach ($n in $names) {
+        $i = -1
+        for ($j = 0; $j -lt $left.Count; $j++) { if ($left[$j].LocationName -eq $n) { $i = $j; break } }
+        if ($i -lt 0) { break }
+        $ordered.Add($left[$i])
+        $left.RemoveAt($i)
+    }
+    if ($names.Count -ne $Tabs.Count -or $left.Count -gt 0) {
+        Write-Warning '화면의 탭 순서를 읽지 못해 탭을 연 순서대로 저장합니다. (창이 최소화돼 있으면 생긴다)'
+        return $Tabs
+    }
+    $ordered
+}
+
 function Get-FldFrontTabs {
     # fnc-ignore
-    # 가장 앞의 탐색기 창에 열린 탭들의 경로 (특수 폴더는 다시 열 수 있게 shell:::{GUID}로 바꾼다)
+    # 가장 앞의 탐색기 창에 열린 탭들의 경로를 화면의 탭 순서대로 (특수 폴더는 다시 열 수 있게 shell:::{GUID}로 바꾼다)
     $shell = New-Object -ComObject Shell.Application
     $tabs = @($shell.Windows() | Where-Object { Get-FldTabPath $_ })
     if (-not $tabs) { throw '열려 있는 탐색기 창이 없습니다.' }
     $hwnds = @($tabs | ForEach-Object { [long]$_.HWND } | Select-Object -Unique)
     $front = if ($hwnds.Count -gt 1) { Get-FldFrontWindow $hwnds } else { $hwnds[0] }
-    @($tabs | Where-Object { [long]$_.HWND -eq $front } | ForEach-Object { (Get-FldTabPath $_) -replace '^::', 'shell:::' })
+    $tabs = @(Get-FldScreenOrder $front @($tabs | Where-Object { [long]$_.HWND -eq $front }))
+    @($tabs | ForEach-Object { (Get-FldTabPath $_) -replace '^::', 'shell:::' })
 }
 
 function fld {
