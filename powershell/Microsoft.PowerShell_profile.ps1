@@ -4735,6 +4735,11 @@ function ssh-help {
     Add-Note "각 pane은 프로필을 읽을 때 감시기를 건다 - 프로필을 바꾼 뒤 기존 pane은 . $PROFILE 을 한 번 실행해야 저장 대상이 된다"
     Add-Note "명령 실행 중인 pane은 상태를 답할 수 없어 어느 pane인지 알려준다 (Ctrl+C로 멈춘 뒤 다시 저장, -f면 구조만 저장)"
     Add-Note "복원하면 SV/DST/SVDIR·작업 경로·제목·탭 색이 돌아오고, 실행 중이던 명령은 히스토리에 들어간다(위 화살표)"
+    Add-Cmd "fld"              "여러 폴더를 탐색기 한 창의 탭으로 열고, 탭 묶음을 세트로 저장해 다시 연다"
+    Add-Note "fld (목록) / fld -o <세트|경로>... / fld -s <세트> [-Force] / fld -a <세트> [경로...]"
+    Add-Note "fld -rm <세트> <경로|번호>... / fld -del <세트> / 사용법은 fld -h"
+    Add-Note "-o는 새 창 하나에 탭으로 연다(세트와 경로를 섞어도 된다). -s는 가장 앞의 탐색기 창에 열린 탭들을 저장한다"
+    Add-Note "-a에서 경로를 생략하면 현재 위치. 내 PC 같은 특수 폴더는 따옴표로 감싼다 ('::{GUID}')"
     Add-Cmd "rsa-pubkey"       "로컬 공개키(id_rsa.pub) 내용을 출력한다"
 
     # ── 3. 원격 작업 디렉터리 ────────────────────────────────────
@@ -6639,4 +6644,300 @@ Register-WsPaneAgent
 
 #########################################################
 # 터미널 작업공간 스냅샷 (ws) 영역 End
+#########################################################
+
+
+#########################################################
+# 탐색기 탭 세트 (fld) 영역 Start
+#########################################################
+# 여러 폴더를 파일 탐색기 한 창의 탭으로 열고, 탭 묶음을 이름 붙인 세트로 저장·관리한다.
+# 탐색기에는 탭을 여는 공식 명령이 없어 새 탭은 "새 탭 추가" 버튼(AutomationId AddButton)을 UI Automation으로 누르고,
+# 경로 이동·열린 탭 조회는 Shell.Application COM으로 한다. (Windows 11 25H2에서 실측)
+# 실측한 제약: Navigate2의 새 탭 플래그(0x800)는 무시되고, 탭 객체의 Quit()은 탭을 닫지 못한다.
+#             Navigate2는 ::{GUID}를 받지 못해 shell:::{GUID}로 바꿔 넘긴다.
+
+# 세트 저장 파일 (rt-recent.txt·workspaces와 같은 프로필 폴더, 저장소 미반영). 시험할 때는 이 변수를 임시 경로로 돌린다.
+$global:fld_store_file = Join-Path (Split-Path -Parent $PROFILE.CurrentUserCurrentHost) 'fld.json'
+
+function Read-FldSets {
+    # fnc-ignore
+    # 세트 파일을 저장된 순서대로 읽는다. 파일이 없거나 비었으면 빈 목록 (이름은 대소문자 무시)
+    $sets = [ordered]@{}
+    if (Test-Path -LiteralPath $global:fld_store_file) {
+        $json = Get-Content -LiteralPath $global:fld_store_file -Raw -Encoding utf8
+        if ($json) {
+            $obj = ConvertFrom-Json $json -AsHashtable
+            foreach ($k in $obj.Keys) { $sets[$k] = @($obj[$k] | Where-Object { $_ }) }
+        }
+    }
+    $sets
+}
+
+function Write-FldSets {
+    # fnc-ignore
+    param($Sets)
+    ConvertTo-Json -InputObject $Sets -Depth 3 | Set-Content -LiteralPath $global:fld_store_file -Encoding utf8
+}
+
+function Show-FldSet {
+    # fnc-ignore
+    # 세트 하나를 순번과 함께 출력한다 (순번은 -Remove에 쓴다)
+    param([string]$SetName, $Paths)
+    $Paths = @($Paths)
+    "[$SetName] $($Paths.Count)개"
+    for ($i = 0; $i -lt $Paths.Count; $i++) { '  {0,2}  {1}' -f ($i + 1), $Paths[$i] }
+}
+
+function Resolve-FldPath {
+    # fnc-ignore
+    # 파일시스템 폴더는 전체 경로로, 셸 경로는 shell: 형식으로 돌려준다(Navigate2는 ::{GUID}를 못 받음). 폴더가 아니면 $null
+    param([string]$Path)
+    if ($Path -match '^::') { return "shell:$Path" }
+    if ($Path -match '^shell:') { return $Path }
+    $resolved = Resolve-Path -LiteralPath $Path -ErrorAction SilentlyContinue
+    if (-not $resolved -or $resolved.Provider.Name -ne 'FileSystem' -or -not (Test-Path -LiteralPath $resolved.ProviderPath -PathType Container)) { return $null }
+    [IO.Path]::TrimEndingDirectorySeparator($resolved.ProviderPath)
+}
+
+function Get-FldPathKey {
+    # fnc-ignore
+    # 비교용 키. 이미 사라진 폴더도 세트에서 뺄 수 있게, 없는 경로는 문자열로만 전체 경로로 만든다
+    param([string]$Path)
+    if ($Path -match '^(::|shell:)') { $Path = $Path -replace '^shell:(?=::)', '' }
+    else {
+        $resolved = Resolve-FldPath $Path
+        $Path = if ($resolved) { $resolved } else { [IO.Path]::GetFullPath($Path, (Get-Location -PSProvider FileSystem).ProviderPath) }
+    }
+    [IO.Path]::TrimEndingDirectorySeparator($Path)
+}
+
+function Get-FldTabPath {
+    # fnc-ignore
+    # 탐색기 탭(COM 창 객체)이 보여 주는 폴더 경로. 특수 폴더는 ::{GUID}, 읽을 수 없으면 $null
+    param($Tab)
+    try { $Tab.Document.Folder.Self.Path } catch { $null }
+}
+
+function Wait-FldCondition {
+    # fnc-ignore
+    # 조건 스크립트블록이 값을 돌려줄 때까지 기다린다. 시간 초과면 $null
+    # (스크립트블록은 호출한 함수의 변수를 그대로 읽으므로 여기 변수 이름은 겹치지 않게 둔다)
+    param([scriptblock]$Condition, [int]$TimeoutMs = 5000)
+    $fldWaitSw = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $fldWaitResult = & $Condition
+        if ($fldWaitResult) { return $fldWaitResult }
+        Start-Sleep -Milliseconds 50
+    } while ($fldWaitSw.ElapsedMilliseconds -lt $TimeoutMs)
+}
+
+function Find-FldNewTab {
+    # fnc-ignore
+    # $Before에 없던(새로 생긴) 탭 객체. 같은 COM 객체는 같은 RCW로 돌아오므로 참조로 비교한다. -Hwnd를 주면 그 창 안에서만 찾는다
+    param($Shell, $Before, [long]$Hwnd = 0)
+    foreach ($w in $Shell.Windows()) {
+        try { $h = [long]$w.HWND } catch { continue }  # 닫히는 중인 창
+        if ($Hwnd -and $h -ne $Hwnd) { continue }
+        if (-not ($Before | Where-Object { [object]::ReferenceEquals($_, $w) })) { return $w }
+    }
+}
+
+function Set-FldTabPath {
+    # fnc-ignore
+    # 탭을 경로로 옮기고 이동이 끝날 때까지 잠깐 기다린다. 실패하면 경고하고 $false (탭은 기본 위치로 남는다)
+    param($Tab, [string]$Path)
+    $start = Get-FldTabPath $Tab
+    try { $Tab.Navigate2($Path) }
+    catch { Write-Warning "이동 실패: $Path ($($_.Exception.Message))"; return $false }
+    # 탭이 알려 주는 경로에는 shell: 접두어가 없어 떼고 비교하고, 표기가 다른 셸 경로는 시작 위치에서 바뀌었으면 이동한 것으로 본다
+    $want = $Path -replace '^shell:(?=::)', ''
+    $null = Wait-FldCondition { $now = Get-FldTabPath $Tab; $now -eq $want -or ($now -and $now -ne $start) } 3000
+    $true
+}
+
+function Open-FldWindow {
+    # fnc-ignore
+    # 새 탐색기 창을 열어 경로들을 차례로 탭으로 연다. 연 탭 수를 돌려준다
+    param([string[]]$Paths)
+    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+    $shell = New-Object -ComObject Shell.Application
+
+    # 인자 없이 새 창을 띄우고(경로 인자 따옴표 문제를 피함), 새로 생긴 탭을 첫 경로로 옮긴다
+    $before = @($shell.Windows())
+    Start-Process explorer.exe
+    $tab = Wait-FldCondition { Find-FldNewTab $shell $before } 10000
+    if (-not $tab) { throw '새 탐색기 창이 열리지 않았습니다.' }
+    $hwnd = [long]$tab.HWND
+    $opened = [int](Set-FldTabPath $tab $Paths[0])
+
+    $ui = [Windows.Automation.AutomationElement]::FromHandle([IntPtr]$hwnd)
+    $addCond = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::AutomationIdProperty, 'AddButton')
+    foreach ($p in $Paths | Select-Object -Skip 1) {
+        $add = Wait-FldCondition { try { $ui.FindFirst([Windows.Automation.TreeScope]::Descendants, $addCond) } catch { $null } }
+        if (-not $add) { throw '탐색기의 "새 탭 추가" 버튼을 찾지 못했습니다.' }
+        $before = @($shell.Windows())
+        $add.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+        $tab = Wait-FldCondition { Find-FldNewTab $shell $before $hwnd }
+        if (-not $tab) { Write-Warning "새 탭이 생기지 않아 건너뜀: $p"; continue }
+        if (Set-FldTabPath $tab $p) { $opened++ }
+    }
+    $opened
+}
+
+function Get-FldFrontWindow {
+    # fnc-ignore
+    # 여러 탐색기 창 중 Z-order가 가장 앞인 창의 핸들
+    param([long[]]$Hwnds)
+    if (-not ('FldNative.User32' -as [type])) {
+        Add-Type -Namespace FldNative -Name User32 -MemberDefinition @'
+[DllImport("user32.dll")] public static extern IntPtr GetTopWindow(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+'@
+    }
+    $h = [FldNative.User32]::GetTopWindow([IntPtr]::Zero)
+    while ($h -ne [IntPtr]::Zero) {
+        if ($h.ToInt64() -in $Hwnds) { return $h.ToInt64() }
+        $h = [FldNative.User32]::GetWindow($h, 2)  # GW_HWNDNEXT
+    }
+    $Hwnds[0]
+}
+
+function Get-FldFrontTabs {
+    # fnc-ignore
+    # 가장 앞의 탐색기 창에 열린 탭들의 경로 (특수 폴더는 다시 열 수 있게 shell:::{GUID}로 바꾼다)
+    $shell = New-Object -ComObject Shell.Application
+    $tabs = @($shell.Windows() | Where-Object { Get-FldTabPath $_ })
+    if (-not $tabs) { throw '열려 있는 탐색기 창이 없습니다.' }
+    $hwnds = @($tabs | ForEach-Object { [long]$_.HWND } | Select-Object -Unique)
+    $front = if ($hwnds.Count -gt 1) { Get-FldFrontWindow $hwnds } else { $hwnds[0] }
+    @($tabs | Where-Object { [long]$_.HWND -eq $front } | ForEach-Object { (Get-FldTabPath $_) -replace '^::', 'shell:::' })
+}
+
+function fld {
+    # 여러 폴더를 탐색기 한 창의 탭으로 연다. 탭 묶음을 세트로 저장·추가·제거 (-h 사용법)
+    [CmdletBinding(DefaultParameterSetName = 'List')]
+    param(
+        [Parameter(ParameterSetName = 'Open')][Alias('o')][switch]$Open,
+        [Parameter(ParameterSetName = 'Save')][Alias('s')][switch]$Save,
+        [Parameter(ParameterSetName = 'Add')][Alias('a')][switch]$Add,
+        [Parameter(ParameterSetName = 'Remove')][Alias('rm')][switch]$Remove,
+        [Parameter(ParameterSetName = 'Delete')][Alias('del')][switch]$Delete,
+        [Parameter(ParameterSetName = 'List')][Alias('ls')][switch]$List,
+        [Parameter(ParameterSetName = 'Help')][Alias('h')][switch]$Help,
+        [Parameter(Position = 0)][string]$Name,
+        [Parameter(Position = 1, ValueFromRemainingArguments)][string[]]$Path,
+        [Parameter(ParameterSetName = 'Save')][switch]$Force
+    )
+
+    if ($Help -or $Name -match '^(--?help|[-/]\?|/h)$') {
+        # 설명 시작 칸을 맞추려고 한글(2칸) 폭 기준으로 공백을 넣었다
+        Write-Host "사용법: fld -Open <세트|경로>...           새 탐색기 창 하나에 탭으로 연다 (세트와 경로를 섞어도 된다)" -ForegroundColor Yellow
+        Write-Host "        fld -Save <세트> [-Force]          가장 앞의 탐색기 창에 열린 탭들을 세트로 저장 (-Force: 덮어쓰기)" -ForegroundColor Yellow
+        Write-Host "        fld -Add <세트> [경로...]          세트에 폴더 추가 (경로를 생략하면 현재 위치, 없는 세트는 새로 만든다)" -ForegroundColor Yellow
+        Write-Host "        fld -Remove <세트> <경로|번호>...  세트에서 제거 (번호는 목록의 순번)" -ForegroundColor Yellow
+        Write-Host "        fld -Delete <세트>                 세트 삭제" -ForegroundColor Yellow
+        Write-Host "        fld [-List] [세트]                 세트 목록 / 세트 내용 (옵션 없이 실행하면 이것)" -ForegroundColor Yellow
+        Write-Host "  짧은 옵션: -o -s -a -rm -del -ls. 세트 이름은 Tab 자동완성." -ForegroundColor DarkCyan
+        Write-Host "  내 PC 같은 특수 폴더는 따옴표로 감싼다: fld -a 작업 '::{20D04FE0-3AEA-1069-A2D8-08002B30309D}'" -ForegroundColor DarkCyan
+        Write-Host "  세트 파일: $global:fld_store_file" -ForegroundColor DarkCyan
+        return
+    }
+
+    # 안의 COM·UI Automation 오류까지 한 번에 잡아 Write-Error 한 줄로 알린다
+    $ErrorActionPreference = 'Stop'
+    try {
+        $mode = $PSCmdlet.ParameterSetName
+        if ($mode -notin 'Open', 'List' -and -not $Name) { throw '세트 이름을 지정하세요. (사용법: fld -h)' }
+        $sets = Read-FldSets
+
+        switch ($mode) {
+            'Open' {
+                $targets = @(@($Name) + @($Path) | Where-Object { $_ })
+                if (-not $targets) { throw '열 세트 이름이나 경로를 지정하세요. (사용법: fld -h)' }
+                $expanded = foreach ($t in $targets) { if ($sets.Contains($t)) { $sets[$t] } else { $t } }
+                $ok = @(foreach ($p in $expanded) {
+                        $r = Resolve-FldPath $p
+                        if ($r) { $r } else { Write-Warning "폴더가 없어 건너뜀: $p" }
+                    })
+                if (-not $ok) { throw '열 수 있는 폴더가 없습니다.' }
+                $n = Open-FldWindow $ok
+                "탭 ${n}개를 열었습니다."
+            }
+            'Save' {
+                if ($sets.Contains($Name) -and -not $Force) { throw "이미 있는 세트입니다: $Name (덮어쓰려면 -Force)" }
+                $tabs = @(Get-FldFrontTabs)
+                $sets[$Name] = $tabs
+                Write-FldSets $sets
+                Show-FldSet $Name $tabs
+            }
+            'Add' {
+                $cur = @($sets[$Name] | Where-Object { $_ })
+                $keys = @($cur | ForEach-Object { Get-FldPathKey $_ })
+                foreach ($p in ($Path ? $Path : '.')) {
+                    $r = Resolve-FldPath $p
+                    if (-not $r) { Write-Warning "폴더가 아니어서 건너뜀: $p"; continue }
+                    if ((Get-FldPathKey $r) -in $keys) { Write-Warning "이미 있음: $r"; continue }
+                    $cur += $r
+                    $keys += Get-FldPathKey $r
+                }
+                $sets[$Name] = $cur
+                Write-FldSets $sets
+                Show-FldSet $Name $cur
+            }
+            'Remove' {
+                if (-not $sets.Contains($Name)) { throw "없는 세트입니다: $Name" }
+                if (-not $Path) { throw '제거할 경로나 번호를 지정하세요.' }
+                $cur = @($sets[$Name])
+                $drop = [Collections.Generic.HashSet[int]]::new()
+                foreach ($p in $Path) {
+                    $i = -1
+                    if ($p -match '^\d+$') { $i = [int]$p - 1 }
+                    else {
+                        $k = Get-FldPathKey $p
+                        for ($j = 0; $j -lt $cur.Count; $j++) { if ((Get-FldPathKey $cur[$j]) -eq $k) { $i = $j; break } }
+                    }
+                    if ($i -lt 0 -or $i -ge $cur.Count) { Write-Warning "세트에 없음: $p"; continue }
+                    $null = $drop.Add($i)
+                }
+                $sets[$Name] = @(for ($j = 0; $j -lt $cur.Count; $j++) { if (-not $drop.Contains($j)) { $cur[$j] } })
+                Write-FldSets $sets
+                Show-FldSet $Name $sets[$Name]
+            }
+            'Delete' {
+                if (-not $sets.Contains($Name)) { throw "없는 세트입니다: $Name" }
+                $old = @($sets[$Name])
+                $sets.Remove($Name)
+                Write-FldSets $sets
+                '세트를 삭제했습니다. 들어 있던 경로:'
+                Show-FldSet $Name $old
+            }
+            'List' {
+                if ($Path) { throw '경로를 넣으려면 -Add, 열려면 -Open을 붙이세요. (사용법: fld -h)' }
+                if ($Name) {
+                    if (-not $sets.Contains($Name)) { throw "없는 세트입니다: $Name" }
+                    Show-FldSet $Name $sets[$Name]
+                }
+                elseif (-not $sets.Count) { "저장된 세트가 없습니다. ($global:fld_store_file)" }
+                else { foreach ($k in $sets.Keys) { Show-FldSet $k $sets[$k] } }
+            }
+        }
+    }
+    catch { Write-Error -Message $_.Exception.Message -ErrorAction Continue }
+}
+
+# 세트 이름 Tab 자동완성. 일치하는 세트가 없으면 아무것도 돌려주지 않아 기본 경로 완성으로 넘어간다(-Open에 경로를 쓸 때)
+Register-ArgumentCompleter -CommandName fld -ParameterName Name -ScriptBlock {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+    $word = $wordToComplete.Trim("'`"")
+    foreach ($k in (Read-FldSets).Keys) {
+        if ($k -like "$word*") {
+            $text = if ($k -match '\s') { "'$k'" } else { $k }
+            [System.Management.Automation.CompletionResult]::new($text, $k, 'ParameterValue', $k)
+        }
+    }
+}
+
+#########################################################
+# 탐색기 탭 세트 (fld) 영역 End
 #########################################################
