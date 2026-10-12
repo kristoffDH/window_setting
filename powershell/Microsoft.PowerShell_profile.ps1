@@ -5379,7 +5379,7 @@ function rt {
         $esc = [char]27
         $rows = foreach ($item in $choices) {
             $where = if ($item.SV -eq $global:SV) { $item.At } else { "다른 서버: {0}" -f $item.SV }
-            "{0}  $esc[90m({1})$esc[0m" -f $item.Path, $where
+            "{0}  $esc[38;5;250m({1})$esc[0m" -f $item.Path, $where
         }
 
         $index = Select-TabPickerItem -Header ("최근에 본 로그 - {0}" -f $global:SV) -Rows @($rows) -Hint '↑↓ 이동 | Enter 선택 | Esc/q 취소'
@@ -6261,7 +6261,7 @@ function Select-TabPickerItem {
             $sb = [System.Text.StringBuilder]::new()
             [void]$sb.Append("$esc[H$esc[2J")
             [void]$sb.Append("$esc[93m$Header$esc[0m`n")
-            [void]$sb.Append("$esc[90m  $Hint$esc[0m`n`n")
+            [void]$sb.Append("$esc[38;5;250m  $Hint$esc[0m`n`n")
 
             for ($i = 0; $i -lt $Rows.Count; $i++) {
                 $cursor = if ($i -eq $pos) { "$esc[92m>$esc[0m" } else { ' ' }
@@ -6325,7 +6325,7 @@ function set-tabcolor
                 "$esc[48;2;{0};{1};{2}m      $esc[0m" -f [Convert]::ToInt32($h.Substring(0, 2), 16), [Convert]::ToInt32($h.Substring(2, 2), 16), [Convert]::ToInt32($h.Substring(4, 2), 16)
             }
             else {
-                "$esc[90m  --  $esc[0m"
+                "$esc[38;5;250m  --  $esc[0m"
             }
             $isCurrent = ($p.Hex -and $p.Hex -eq $current) -or (-not $p.Hex -and -not $current)
             $mark = if ($isCurrent) { "  $esc[92m(현재)$esc[0m" } else { '' }
@@ -6401,8 +6401,8 @@ function set-tabtitle
 
         $esc = [char]27
         $rows = foreach ($item in $items) {
-            $text = if ($null -eq $item.Title) { "$esc[90m새 제목을 입력한다$esc[0m" }
-                elseif ($item.Title -eq '') { "$esc[90m프로필 이름으로 되돌린다$esc[0m" }
+            $text = if ($null -eq $item.Title) { "$esc[38;5;250m새 제목을 입력한다$esc[0m" }
+                elseif ($item.Title -eq '') { "$esc[38;5;250m프로필 이름으로 되돌린다$esc[0m" }
                 else { $item.Title }
             $mark = if ($null -ne $item.Title -and $item.Title -eq $current) { "  $esc[92m(현재)$esc[0m" } else { '' }
             "{0}{1}{2}" -f $item.Label, $text, $mark
