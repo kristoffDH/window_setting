@@ -216,8 +216,8 @@
                 "weight": "medium"
             },
             "historySize": 100000,
-            "opacity": 100,
-            "padding": "10",
+            "opacity": 90,
+            "padding": "15",
             "scrollbarState": "hidden",
             "suppressApplicationTitle": true,
             "useAcrylic": false
@@ -240,6 +240,8 @@
                 "opacity": 85,
                 "padding": "5",
                 "source": "Windows.Terminal.PowershellCore",
+                "startingDirectory": "C:\\Users\\hanssak\\Downloads",
+                "suppressApplicationTitle": false,
                 "useAcrylic": true
             },
             {
@@ -258,6 +260,7 @@
                 "opacity": 90,
                 "padding": "5",
                 "startingDirectory": "%USERPROFILE%",
+                "suppressApplicationTitle": false,
                 "useAcrylic": true
             },
             {
@@ -283,7 +286,8 @@
                 "guid": "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}",
                 "hidden": false,
                 "historySize": 100000,
-                "name": "Windows PowerShell"
+                "name": "Windows PowerShell",
+                "suppressApplicationTitle": false
             },
             {
                 "altGrAliasing": true,
@@ -307,6 +311,7 @@
                 "padding": "8, 8, 8, 8",
                 "snapOnInput": true,
                 "startingDirectory": "%USERPROFILE%",
+                "suppressApplicationTitle": false,
                 "useAcrylic": false
             }
         ]
@@ -455,7 +460,7 @@
             "background": "#1E1E1E",
             "black": "#232323",
             "blue": "#008DF8",
-            "brightBlack": "#444444",
+            "brightBlack": "#7F848E",
             "brightBlue": "#0092FF",
             "brightCyan": "#67FFF0",
             "brightGreen": "#9AFF87",
