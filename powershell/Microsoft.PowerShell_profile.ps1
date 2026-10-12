@@ -280,12 +280,6 @@ function config-omp # open oh my posh config-file via vscode
     code $omp_config_file
 }
 
-function ssh-config
-{
-    # ssh config 파일을 VSCode로 연다.
-    code $Home/.ssh/config
-}
-
 function upload-cfg
 {
     # PowerShell 프로필(+ 로더, 자동 로드 스크립트)과 oh-my-posh 테마를 win_term 저장소에 복사해 커밋하고 푸시한다.
@@ -2756,6 +2750,1220 @@ function del-host {
 
 
 #########################################################
+# ssh config 편집 (ssh-config) 영역 Start
+#########################################################
+# ~/.ssh/config의 Host 블록을 터미널에서 목록·추가·수정·삭제한다. (편집기를 열지 않는다)
+# 손대지 않는 줄(주석·빈 줄·들여쓰기·다른 블록)은 그대로 두고, 고치기 전에 백업(config.bak-<시각>, 최근 5개)을 남긴다.
+# 파일은 지우고 새로 만들지 않고 내용만 덮어쓴다 - Windows OpenSSH가 확인하는 파일 권한(ACL)을 그대로 두기 위해서다.
+
+function Read-SshConfigDoc {
+    # fnc-ignore
+    # config 파일을 줄 단위로 읽는다. 줄바꿈(CRLF/LF)·BOM·마지막 줄바꿈 여부를 기억해 두었다가 그대로 다시 쓴다.
+    param([string]$Path)
+
+    # 빈 배열은 if 식을 거치면 $null로 풀리므로 형을 고정해 둔다 (빈 파일·없는 파일).
+    [byte[]]$bytes = @()
+    if (Test-Path -LiteralPath $Path) { $bytes = [IO.File]::ReadAllBytes($Path) }
+    $hasBom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
+    $text = if ($hasBom) { [Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3) } else { [Text.Encoding]::UTF8.GetString($bytes) }
+
+    $newline = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $trailing = $text.EndsWith("`n")
+    if ($text.EndsWith("`r`n")) { $text = $text.Substring(0, $text.Length - 2) }
+    elseif ($trailing) { $text = $text.Substring(0, $text.Length - 1) }
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    if ($bytes.Length -gt 0) { foreach ($line in ($text -split "\r?\n")) { $lines.Add($line) } }
+
+    [pscustomobject]@{
+        Path     = $Path
+        Lines    = $lines
+        Newline  = $newline
+        HasBom   = $hasBom
+        Trailing = ($trailing -or $bytes.Length -eq 0)
+    }
+}
+
+function Get-SshConfigKeyLine {
+    # fnc-ignore
+    # 설정 줄을 들여쓰기 / 키 / 구분자 / 값으로 나눈다. 주석·빈 줄 등 설정 줄이 아니면 아무것도 돌려주지 않는다.
+    param([string]$Line)
+
+    if ($Line.TrimStart().StartsWith('#')) { return }
+
+    if ($Line -match '^(?<indent>\s*)(?<key>[A-Za-z][A-Za-z0-9]*)(?<sep>\s*=\s*|\s+)(?<value>\S.*?)\s*$') {
+        $value = $Matches.value
+        if ($value.Length -ge 2 -and $value.StartsWith('"') -and $value.EndsWith('"')) { $value = $value.Substring(1, $value.Length - 2) }
+
+        [pscustomobject]@{ Indent = $Matches.indent; Key = $Matches.key; Sep = $Matches.sep; Value = $value }
+    }
+}
+
+function Get-SshConfigBlocks {
+    # fnc-ignore
+    # Host / Match 줄마다 블록 하나. BodyEnd는 마지막 설정 줄 다음 - 그 뒤의 빈 줄·주석은 다음 블록의 머리말로 보고 건드리지 않는다.
+    param($Doc)
+
+    $lines = $Doc.Lines
+    $heads = @(for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^\s*(?i:host|match)(\s*=\s*|\s+)\S') { $i } })
+
+    for ($n = 0; $n -lt $heads.Count; $n++) {
+        $start = $heads[$n]
+        $end = if ($n + 1 -lt $heads.Count) { $heads[$n + 1] } else { $lines.Count }
+
+        $bodyEnd = $start + 1
+        for ($j = $end - 1; $j -gt $start; $j--) {
+            $t = $lines[$j].Trim()
+            if ($t -and -not $t.StartsWith('#')) { $bodyEnd = $j + 1; break }
+        }
+
+        $null = $lines[$start] -match '^(?<indent>\s*)(?<kw>\S+?)(?:\s*=\s*|\s+)(?<rest>.*?)\s*$'
+        $kind = if ($Matches.kw -ieq 'host') { 'Host' } else { 'Match' }
+        $patterns = if ($kind -eq 'Host') { @(Split-SshTokens $Matches.rest) } else { @() }
+
+        [pscustomobject]@{
+            Kind     = $kind
+            Start    = $start
+            End      = $end
+            BodyEnd  = $bodyEnd
+            Indent   = $Matches.indent
+            Keyword  = $Matches.kw
+            Patterns = $patterns
+        }
+    }
+}
+
+function Get-SshConfigBlockFor {
+    # fnc-ignore
+    # 문서 안에서 별칭이 들어 있는 Host 블록 (처음 것).
+    param($Doc, [string]$Alias)
+
+    Get-SshConfigBlocks -Doc $Doc | Where-Object { $_.Kind -eq 'Host' -and @($_.Patterns | Where-Object { $_ -ieq $Alias }).Count } | Select-Object -First 1
+}
+
+function Get-SshConfigBlockValue {
+    # fnc-ignore
+    # 블록 안에서 키의 값 (처음 것, 없으면 빈 문자열).
+    param($Doc, $Block, [string]$Key)
+
+    for ($i = $Block.Start + 1; $i -lt $Block.BodyEnd; $i++) {
+        $kv = Get-SshConfigKeyLine $Doc.Lines[$i]
+        if ($kv -and $kv.Key -ieq $Key) { return $kv.Value }
+    }
+    ''
+}
+
+function Get-SshConfigIndent {
+    # fnc-ignore
+    # 새 설정 줄의 들여쓰기. 그 블록에 설정 줄이 있으면 그 들여쓰기, 없으면 파일에서 처음 보이는 들여쓰기, 그것도 없으면 공백 4칸.
+    param($Doc, $Block)
+
+    $ranges = @()
+    if ($Block) { $ranges += , @(($Block.Start + 1), $Block.BodyEnd) }
+    $ranges += , @(0, $Doc.Lines.Count)
+
+    foreach ($range in $ranges) {
+        for ($i = $range[0]; $i -lt $range[1]; $i++) {
+            $kv = Get-SshConfigKeyLine $Doc.Lines[$i]
+            if ($kv -and $kv.Indent -and $kv.Key -notmatch '^(?i:host|match|include)$') { return $kv.Indent }
+        }
+    }
+    '    '
+}
+
+function Format-SshConfigValue {
+    # fnc-ignore
+    # 공백이 들어간 값은 큰따옴표로 감싼다 (예: 공백 있는 키 파일 경로).
+    param([string]$Value)
+
+    if ($Value -match '\s' -and -not ($Value.StartsWith('"') -and $Value.EndsWith('"'))) { return '"' + $Value + '"' }
+    $Value
+}
+
+function Set-SshConfigKey {
+    # fnc-ignore
+    # 블록에 키를 넣거나 바꾼다. 이미 있으면 첫 줄의 값만 바꾸고(들여쓰기·키 표기 유지) 같은 키의 나머지 줄은 지운다. 없으면 마지막 설정 줄 뒤에 넣는다.
+    param($Doc, $Block, [string]$Key, [string]$Value)
+
+    $hits = @(for ($i = $Block.Start + 1; $i -lt $Block.BodyEnd; $i++) {
+            $kv = Get-SshConfigKeyLine $Doc.Lines[$i]
+            if ($kv -and $kv.Key -ieq $Key) { $i }
+        })
+
+    $text = Format-SshConfigValue $Value
+
+    if ($hits.Count -gt 0) {
+        $kv = Get-SshConfigKeyLine $Doc.Lines[$hits[0]]
+        $Doc.Lines[$hits[0]] = "{0}{1}{2}{3}" -f $kv.Indent, $kv.Key, $kv.Sep, $text
+        for ($n = $hits.Count - 1; $n -ge 1; $n--) { $Doc.Lines.RemoveAt($hits[$n]) }
+        return
+    }
+
+    $indent = Get-SshConfigIndent -Doc $Doc -Block $Block
+    $Doc.Lines.Insert($Block.BodyEnd, ("{0}{1} {2}" -f $indent, $Key, $text))
+}
+
+function Remove-SshConfigKey {
+    # fnc-ignore
+    # 블록에서 키를 모두 지운다. 지운 줄 수를 돌려준다.
+    param($Doc, $Block, [string]$Key)
+
+    $hits = @(for ($i = $Block.Start + 1; $i -lt $Block.BodyEnd; $i++) {
+            $kv = Get-SshConfigKeyLine $Doc.Lines[$i]
+            if ($kv -and $kv.Key -ieq $Key) { $i }
+        })
+
+    for ($n = $hits.Count - 1; $n -ge 0; $n--) { $Doc.Lines.RemoveAt($hits[$n]) }
+    $hits.Count
+}
+
+function Remove-SshConfigBlankRun {
+    # fnc-ignore
+    # 줄을 지운 자리에 빈 줄이 겹치면 하나로 줄이고, 파일 맨 앞·맨 끝의 빈 줄은 없앤다.
+    param($Doc, [int]$At)
+
+    $lines = $Doc.Lines
+    while ($At -gt 0 -and $At -lt $lines.Count -and -not $lines[$At - 1].Trim() -and -not $lines[$At].Trim()) { $lines.RemoveAt($At) }
+    while ($lines.Count -gt 0 -and -not $lines[0].Trim()) { $lines.RemoveAt(0) }
+    while ($lines.Count -gt 0 -and -not $lines[$lines.Count - 1].Trim()) { $lines.RemoveAt($lines.Count - 1) }
+}
+
+function Save-SshConfigDoc {
+    # fnc-ignore
+    # 백업을 남긴 뒤 같은 파일에 내용만 덮어쓴다(파일을 새로 만들지 않아 권한이 그대로 남는다). 백업 경로를 돌려준다.
+    param($Doc)
+
+    $path = $Doc.Path
+    $backup = ''
+
+    if (Test-Path -LiteralPath $path) {
+        $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+        $backup = "$path.bak-$stamp"
+        $n = 1
+        while (Test-Path -LiteralPath $backup) { $n++; $backup = "$path.bak-$stamp-$n" }
+        Copy-Item -LiteralPath $path -Destination $backup
+
+        # 백업은 최근 5개만 남긴다 (이름에 시각이 들어 있어 이름 순서 = 시간 순서).
+        Get-ChildItem -LiteralPath (Split-Path -Parent $path) -Filter ((Split-Path -Leaf $path) + '.bak-*') -File |
+            Sort-Object Name -Descending | Select-Object -Skip 5 | Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+
+    $text = $Doc.Lines -join $Doc.Newline
+    if ($Doc.Trailing -and $Doc.Lines.Count -gt 0) { $text += $Doc.Newline }
+
+    $encoding = [System.Text.UTF8Encoding]::new($Doc.HasBom)
+    $bytes = [byte[]](@($encoding.GetPreamble()) + @($encoding.GetBytes($text)))
+
+    if (Test-Path -LiteralPath $path) {
+        $stream = [IO.File]::Open($path, [IO.FileMode]::Truncate, [IO.FileAccess]::Write)
+        try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
+    }
+    else {
+        [IO.File]::WriteAllBytes($path, $bytes)
+    }
+
+    $backup
+}
+
+function Get-SshConfigHosts {
+    # fnc-ignore
+    # config(Include 포함)의 별칭마다 정의된 파일·블록·주요 값을 모은다. 같은 별칭이 여러 번 있으면 ssh처럼 처음 것만.
+    param([string]$ConfigPath)
+
+    $docs = @{}
+    $seen = @{}
+
+    foreach ($entry in @(Get-SshAliasesFromConfigFile -Path $ConfigPath -Visited @{})) {
+        $key = $entry.Alias.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+
+        if (-not $docs.ContainsKey($entry.Source)) { $docs[$entry.Source] = Read-SshConfigDoc -Path $entry.Source }
+        $doc = $docs[$entry.Source]
+        $block = Get-SshConfigBlockFor -Doc $doc -Alias $entry.Alias
+        if (-not $block) { continue }
+
+        [pscustomobject]@{
+            Alias        = $entry.Alias
+            Source       = $entry.Source
+            Line         = $block.Start + 1
+            Shared       = ($block.Patterns.Count -gt 1)
+            HostName     = Get-SshConfigBlockValue -Doc $doc -Block $block -Key 'HostName'
+            User         = Get-SshConfigBlockValue -Doc $doc -Block $block -Key 'User'
+            Port         = Get-SshConfigBlockValue -Doc $doc -Block $block -Key 'Port'
+            IdentityFile = Get-SshConfigBlockValue -Doc $doc -Block $block -Key 'IdentityFile'
+        }
+    }
+}
+
+function Test-SshConfigIsDefault {
+    # fnc-ignore
+    # 기본 config(~/.ssh/config)인지. 아니면 ssh를 부를 때 -F로 그 파일을 알려줘야 한다.
+    param([string]$ConfigPath)
+
+    try {
+        [IO.Path]::GetFullPath((Expand-UserPath $ConfigPath)) -ieq [IO.Path]::GetFullPath((Join-Path $HOME '.ssh\config'))
+    }
+    catch { $false }
+}
+
+function Show-SshConfigEffective {
+    # fnc-ignore
+    # ssh가 실제로 읽는 값(ssh -G)을 한 줄로 보여준다. config 문법이 깨졌으면 여기서 드러난다.
+    param([string]$ConfigPath, [string]$Alias, [string]$Backup)
+
+    $fileArgs = if (Test-SshConfigIsDefault $ConfigPath) { @() } else { @('-F', (Expand-UserPath $ConfigPath)) }
+    $out = @(& ssh @fileArgs -G $Alias 2>&1 | ForEach-Object { [string]$_ })
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning ("ssh가 config를 읽지 못했습니다: {0}" -f ($out -join ' '))
+        if ($Backup) { Write-Host ("  되돌리려면: Copy-Item -LiteralPath '{0}' -Destination '{1}' -Force" -f $Backup, $ConfigPath) -ForegroundColor DarkCyan }
+        return
+    }
+
+    $map = @{}
+    foreach ($line in $out) {
+        if ($line -match '^(\S+)\s+(.*)$' -and -not $map.ContainsKey($Matches[1])) { $map[$Matches[1]] = $Matches[2] }
+    }
+
+    Write-Host ("  확인(ssh -G): 주소 {0} · 사용자 {1} · 포트 {2}" -f $map['hostname'], $map['user'], $map['port']) -ForegroundColor DarkCyan
+}
+
+function Clear-SshConfigCache {
+    # fnc-ignore
+    # ss 선택기가 기억해 둔 조회 결과를 지워 바뀐 값이 바로 보이게 한다. 선택 중인 SV/DST면 다시 고르라고 알린다.
+    param([string[]]$Alias)
+
+    foreach ($name in @($Alias | Where-Object { $_ })) {
+        if ($script:SshPickerDetailCache) { $script:SshPickerDetailCache.Remove($name.ToLowerInvariant()) }
+
+        if ([string]$global:SV -ieq $name) { Write-Host ("  지금 선택된 SV입니다 - ss {0} 로 다시 고르면 바뀐 값이 반영됩니다." -f $name) -ForegroundColor Yellow }
+        if ([string]$global:DST -ieq $name) { Write-Host ("  지금 선택된 DST입니다 - sd {0} 로 다시 고르면 바뀐 값이 반영됩니다." -f $name) -ForegroundColor Yellow }
+    }
+}
+
+function Test-SshConfigAliasName {
+    # fnc-ignore
+    # 별칭으로 쓸 수 있는 이름인지 (공백·와일드카드·따옴표·# 불가).
+    param([string]$Alias)
+
+    -not [string]::IsNullOrWhiteSpace($Alias) -and $Alias -notmatch '[\s*?!#"'']'
+}
+
+function ConvertFrom-SshConfigOption {
+    # fnc-ignore
+    # -o 키=값 을 나눈다. 형식이 틀리면 $null.
+    param([string]$Text)
+
+    if ($Text -match '^\s*(?<key>[A-Za-z][A-Za-z0-9]*)\s*=\s*(?<value>.*?)\s*$' -and $Matches.value) {
+        return [pscustomobject]@{ Key = $Matches.key; Value = $Matches.value }
+    }
+    $null
+}
+
+function Get-SshConfigBanner {
+    # fnc-ignore
+    # i번째 줄에서 그룹 머리(배너)를 찾는다. 3줄(#### / # 이름 / ####)과 1줄(#### 이름 ####)을 모두 받는다. 아니면 $null.
+    param($Lines, [int]$At)
+
+    $rule = '^\s*#{5,}\s*$'
+
+    if ($At + 2 -lt $Lines.Count -and $Lines[$At] -match $rule -and $Lines[$At + 2] -match $rule -and
+        $Lines[$At + 1] -match '^\s*#+\s*(?<name>[^#\s].*?)\s*#*\s*$') {
+        return [pscustomobject]@{ Start = $At; End = $At + 3; Name = $Matches.name; Style = '3'; Width = $Lines[$At].Trim().Length }
+    }
+
+    if ($Lines[$At] -match '^\s*#{3,}\s+(?<name>[^#\s].*?)\s+#{3,}\s*$') {
+        return [pscustomobject]@{ Start = $At; End = $At + 1; Name = $Matches.name; Style = '1'; Width = 0 }
+    }
+
+    $null
+}
+
+function New-SshConfigBannerLines {
+    # fnc-ignore
+    # 새 그룹 머리 줄. 파일에서 쓰던 모양(3줄이면 같은 폭)을 따른다.
+    param([string]$Name, [string]$Style = '3', [int]$Width = 53)
+
+    if ($Style -eq '1') { return , @("######### $Name #########") }
+    $rule = '#' * [Math]::Max(10, $Width)
+    , @($rule, "# $Name", $rule)
+}
+
+function Get-SshConfigLayout {
+    # fnc-ignore
+    # 순서를 바꿀 수 있는 부분을 '단위'(그룹 머리 또는 Host 블록)로 나눈다.
+    #   Preamble: 첫 단위 앞(전역 설정·Include 등)  /  Units: 그룹 머리와 Host 블록(바로 위 주석 포함)  /  Tail: 첫 'Host *'·Match부터 끝(고정)
+    # 단위 사이의 주석은 다음 단위에 붙여 함께 옮긴다 - 옮겨도 줄이 사라지지 않게.
+    param($Doc)
+
+    $lines = $Doc.Lines
+    $blocks = @(Get-SshConfigBlocks -Doc $Doc)
+    $fixed = $blocks | Where-Object { $_.Kind -eq 'Match' -or $_.Patterns -contains '*' } | Select-Object -First 1
+    $limit = if ($fixed) { $fixed.Start } else { $lines.Count }
+
+    $movable = @($blocks | Where-Object { $_.Start -lt $limit -and $_.Kind -eq 'Host' -and -not ($_.Patterns -contains '*') })
+    $inBody = @{}
+    foreach ($b in $movable) { for ($i = $b.Start + 1; $i -lt $b.BodyEnd; $i++) { $inBody[$i] = $true } }
+
+    # 그룹 머리와 Host 블록을 파일 순서대로 늘어놓는다.
+    $anchors = [System.Collections.Generic.List[object]]::new()
+    $i = 0
+    while ($i -lt $limit) {
+        # $host는 PowerShell 예약 변수라 다른 이름을 쓴다.
+        $hostBlock = $movable | Where-Object { $_.Start -eq $i } | Select-Object -First 1
+        if ($hostBlock) {
+            $anchors.Add([pscustomobject]@{ Type = 'Host'; Start = $i; End = $hostBlock.BodyEnd; Block = $hostBlock; Banner = $null })
+            $i = $hostBlock.BodyEnd
+            continue
+        }
+
+        if (-not $inBody.ContainsKey($i)) {
+            $banner = Get-SshConfigBanner $lines $i
+            if ($banner -and $banner.End -le $limit) {
+                $anchors.Add([pscustomobject]@{ Type = 'Banner'; Start = $i; End = $banner.End; Block = $null; Banner = $banner })
+                $i = $banner.End
+                continue
+            }
+        }
+        $i++
+    }
+
+    # 고정 부분은 'Host *' 바로 위에 붙은 설명 주석부터 (마지막 단위보다 앞으로는 안 간다).
+    $regionEnd = $limit
+    $floor = if ($anchors.Count) { $anchors[$anchors.Count - 1].End } else { 0 }
+    if ($fixed) {
+        while ($regionEnd -gt $floor -and $lines[$regionEnd - 1].TrimStart().StartsWith('#')) { $regionEnd-- }
+    }
+
+    $units = [System.Collections.Generic.List[object]]::new()
+    $firstStart = $regionEnd
+    $prevEnd = -1
+    $id = 0
+
+    foreach ($a in $anchors) {
+        if ($prevEnd -lt 0) {
+            # 첫 단위: 바로 위에 붙은 주석만 단위에 넣는다 (빈 줄 너머는 파일 머리말로 둔다).
+            $start = $a.Start
+            if ($a.Type -eq 'Host') { while ($start -gt 0 -and $lines[$start - 1].TrimStart().StartsWith('#')) { $start-- } }
+            $firstStart = $start
+        }
+        else {
+            $start = $prevEnd
+            while ($start -lt $a.Start -and -not $lines[$start].Trim()) { $start++ }
+        }
+
+        $chunk = @(for ($j = $start; $j -lt $a.End; $j++) { $lines[$j] })
+        $id++
+
+        if ($a.Type -eq 'Banner') {
+            $units.Add([pscustomobject]@{
+                    Id = $id; Type = 'Banner'; Name = $a.Banner.Name; Lines = $chunk; StartLine = $start; EndLine = $a.End
+                    BannerAt = ($a.Start - $start); Style = $a.Banner.Style; Width = $a.Banner.Width
+                    Patterns = @(); HostName = ''
+                })
+        }
+        else {
+            $units.Add([pscustomobject]@{
+                    Id = $id; Type = 'Host'; Name = ($a.Block.Patterns -join ' '); Lines = $chunk; StartLine = $start; EndLine = $a.End
+                    BannerAt = -1; Style = ''; Width = 0
+                    Patterns = @($a.Block.Patterns); HostName = (Get-SshConfigBlockValue -Doc $Doc -Block $a.Block -Key 'HostName')
+                })
+        }
+        $prevEnd = $a.End
+    }
+
+    $lastEnd = if ($prevEnd -ge 0) { $prevEnd } else { $firstStart }
+    $preamble = @(for ($j = 0; $j -lt $firstStart; $j++) { $lines[$j] })
+    $tail = @(for ($j = $lastEnd; $j -lt $lines.Count; $j++) { $lines[$j] })
+
+    # 새 그룹 머리를 만들 때 따를 모양: 파일의 첫 그룹 머리 (없으면 3줄, 폭 53, 머리 아래 빈 줄 없음).
+    $firstBanner = $anchors | Where-Object { $_.Type -eq 'Banner' } | Select-Object -First 1
+    $style = '3'; $width = 53; $gap = 0
+    if ($firstBanner) {
+        $style = $firstBanner.Banner.Style
+        if ($firstBanner.Banner.Width) { $width = $firstBanner.Banner.Width }
+        if ($firstBanner.End -lt $lines.Count -and -not $lines[$firstBanner.End].Trim()) { $gap = 1 }
+    }
+
+    [pscustomobject]@{
+        Preamble   = $preamble
+        Units      = $units
+        Tail       = $tail
+        RegionEnd  = $regionEnd
+        Style      = $style
+        Width      = $width
+        BannerGap  = $gap
+        HasBanners = [bool]$firstBanner
+    }
+}
+
+function Get-SshConfigGroupOf {
+    # fnc-ignore
+    # 단위 목록에서 별칭마다 속한 그룹 이름 (그룹 머리 앞이면 빈 문자열).
+    param($Units)
+
+    $map = @{}
+    $group = ''
+    foreach ($u in $Units) {
+        if ($u.Type -eq 'Banner') { $group = $u.Name; continue }
+        foreach ($p in $u.Patterns) { $map[$p.ToLowerInvariant()] = $group }
+    }
+    $map
+}
+
+function ConvertTo-SshConfigLines {
+    # fnc-ignore
+    # 단위 순서대로 줄을 다시 짠다. 단위 사이는 빈 줄 하나, 그룹 머리 바로 아래는 파일에서 쓰던 간격.
+    param($Layout)
+
+    $out = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in $Layout.Preamble) { $out.Add($line) }
+    while ($out.Count -gt 0 -and -not $out[$out.Count - 1].Trim()) { $out.RemoveAt($out.Count - 1) }
+
+    $prev = $null
+    foreach ($u in $Layout.Units) {
+        if ($out.Count -gt 0) {
+            $blank = if ($u.Type -eq 'Host' -and $prev -eq 'Banner') { $Layout.BannerGap } else { 1 }
+            for ($k = 0; $k -lt $blank; $k++) { $out.Add('') }
+        }
+        foreach ($line in $u.Lines) { $out.Add($line) }
+        $prev = $u.Type
+    }
+
+    $tail = @($Layout.Tail)
+    $skip = 0
+    while ($skip -lt $tail.Count -and -not $tail[$skip].Trim()) { $skip++ }
+    if ($skip -lt $tail.Count) {
+        if ($out.Count -gt 0) { $out.Add('') }
+        for ($k = $skip; $k -lt $tail.Count; $k++) { $out.Add($tail[$k]) }
+    }
+
+    while ($out.Count -gt 0 -and -not $out[$out.Count - 1].Trim()) { $out.RemoveAt($out.Count - 1) }
+    , $out
+}
+
+function Add-SshConfigLinesAt {
+    # fnc-ignore
+    # 줄 묶음을 끼워 넣는다. 앞 줄이 비어 있지 않으면 빈 줄 Gap개, 뒤 줄이 비어 있지 않으면 빈 줄 하나를 둔다.
+    param($Doc, [int]$At, [string[]]$Lines, [int]$Gap = 1)
+
+    $insert = [System.Collections.Generic.List[string]]::new()
+    if ($At -gt 0 -and $Doc.Lines[$At - 1].Trim()) { for ($k = 0; $k -lt $Gap; $k++) { $insert.Add('') } }
+    foreach ($line in $Lines) { $insert.Add($line) }
+    if ($At -lt $Doc.Lines.Count -and $Doc.Lines[$At].Trim()) { $insert.Add('') }
+
+    $Doc.Lines.InsertRange($At, $insert)
+}
+
+function Get-SshConfigUnitRange {
+    # fnc-ignore
+    # 단위 목록에서 i번째 그룹 머리가 거느린 범위 [i, 다음 그룹 머리) 의 끝.
+    param($Units, [int]$Index)
+
+    $end = $Index + 1
+    while ($end -lt $Units.Count -and $Units[$end].Type -ne 'Banner') { $end++ }
+    $end
+}
+
+function Read-SshConfigArrangeKey {
+    # fnc-ignore
+    # 정리 화면의 키 입력 (시험 때 이 함수만 바꿔 끼운다).
+    Read-SshPickerKey
+}
+
+function Show-SshConfigArrange {
+    # fnc-ignore
+    # 정리 화면을 그린다. 화면보다 길면 커서가 보이도록 위아래로 넘긴다.
+    param($Units, [int]$Cursor, [int]$Held, [string]$Path, [bool]$HasTail, [string]$Message)
+
+    $esc = [char]27
+    # 보조 글자는 밝은 회색(250). 팔레트의 어두운 회색(90)은 배경 그림·반투명 배경 위에서 거의 안 보인다.
+    $dim = "$esc[38;5;250m"
+    $height = 30
+    try { $height = [Console]::WindowHeight } catch { }
+    $visible = [Math]::Max(5, $height - 6)
+
+    $top = [Math]::Max(0, [Math]::Min($Cursor - [int]($visible / 2), $Units.Count - $visible))
+    $nameWidth = [Math]::Min(40, (@($Units | Where-Object { $_.Type -eq 'Host' } | ForEach-Object { Get-TextDisplayWidth $_.Name }) + @(0) | Measure-Object -Maximum).Maximum)
+    $sb = [System.Text.StringBuilder]::new()
+    [void]$sb.Append("$esc[H$esc[2J")
+    [void]$sb.Append(("$esc[93mssh config 순서·그룹 정리$esc[0m  $dim{0}$esc[0m`n" -f $Path))
+    [void]$sb.Append("$dim  ↑↓ 이동 | Space 잡기/놓기 (그룹 머리를 잡으면 그룹째) | n 새 그룹 | r 그룹 이름 | x 그룹 머리 지우기 | Enter 저장 | Esc 취소$esc[0m`n")
+    [void]$sb.Append(("{0}`n" -f $(if ($Message) { "  $esc[33m$Message$esc[0m" } else { '' })))
+
+    if ($Units.Count -gt 0 -and $Units[0].Type -eq 'Host' -and $top -eq 0) { [void]$sb.Append("  $dim(그룹 없음)$esc[0m`n") }
+
+    $last = [Math]::Min($Units.Count, $top + $visible)
+    for ($i = $top; $i -lt $last; $i++) {
+        $u = $Units[$i]
+        $mark = if ($i -eq $Cursor) { "$esc[92m>$esc[0m" } else { ' ' }
+        $hold = if ($Held -ge 0 -and (($Units[$Held].Type -eq 'Host' -and $i -eq $Held) -or ($Units[$Held].Type -eq 'Banner' -and $i -ge $Held -and $i -lt (Get-SshConfigUnitRange $Units $Held)))) { "$esc[7m" } else { '' }
+
+        if ($u.Type -eq 'Banner') {
+            $count = (Get-SshConfigUnitRange $Units $i) - $i - 1
+            [void]$sb.Append((" {0} {1}$esc[1;33m[{2}]$esc[0m  $dim{3}개$esc[0m`n" -f $mark, $hold, $u.Name, $count))
+        }
+        else {
+            $pad = ' ' * [Math]::Max(0, $nameWidth - (Get-TextDisplayWidth $u.Name))
+            [void]$sb.Append((" {0}   {1}{2}$esc[0m{3}  $dim{4}$esc[0m`n" -f $mark, $hold, $u.Name, $pad, $u.HostName))
+        }
+    }
+
+    if ($last -lt $Units.Count) { [void]$sb.Append(("  $dim... 아래 {0}개 더$esc[0m`n" -f ($Units.Count - $last))) }
+    if ($HasTail) { [void]$sb.Append("  $dim── Host * / Match 등 공통 블록 (자리 고정) ──$esc[0m`n") }
+
+    [Console]::Write($sb.ToString())
+}
+
+function Invoke-SshConfigArrange {
+    # fnc-ignore
+    # 커서로 Host·그룹의 순서를 바꾸는 화면 (ssh-config -m). 저장하면 $true.
+    param($Doc)
+
+    $layout = Get-SshConfigLayout -Doc $Doc
+    $units = [System.Collections.Generic.List[object]]::new()
+    foreach ($u in $layout.Units) { $units.Add($u) }
+
+    if ($units.Count -eq 0) {
+        Write-Host '정리할 Host가 없습니다.' -ForegroundColor Yellow
+        return $false
+    }
+
+    $original = (@($units | ForEach-Object { "{0}:{1}" -f $_.Id, $_.Name }) -join '|')
+    $cursor = 0
+    $held = -1
+    $message = ''
+    $nextId = 100000
+    $saved = $false
+    $esc = [char]27
+    $hasTail = @($layout.Tail | Where-Object { $_.Trim() }).Count -gt 0
+
+    # 그룹 머리 줄의 이름을 바꾼 새 단위 (머리 위에 붙어 있던 주석은 그대로 둔다).
+    $renameBanner = {
+        param($u, [string]$name)
+        $lines = @($u.Lines)
+        if ($u.Style -eq '1') { $lines[$u.BannerAt] = "######### $name #########" } else { $lines[$u.BannerAt + 1] = "# $name" }
+        [pscustomobject]@{ Id = $u.Id; Type = 'Banner'; Name = $name; Lines = $lines; BannerAt = $u.BannerAt; Style = $u.Style; Width = $u.Width; Patterns = @(); HostName = '' }
+    }
+
+    $askName = {
+        param([string]$Prompt)
+        [Console]::Write("$esc[?25h")
+        $answer = ([string](Read-Host $Prompt)).Trim()
+        [Console]::Write("$esc[?25l")
+        $answer
+    }
+
+    [Console]::Write("$esc[?1049h$esc[?25l")
+
+    try {
+        # switch 안의 break는 switch만 빠져나오므로 루프에 이름을 붙여 Enter/Esc에서 빠져나온다.
+        :arrange while ($true) {
+            Show-SshConfigArrange -Units $units -Cursor $cursor -Held $held -Path $Doc.Path -HasTail $hasTail -Message $message
+            $message = ''
+            $key = Read-SshConfigArrangeKey
+
+            switch ($key) {
+                'UpArrow' {
+                    if ($held -lt 0) { $cursor = [Math]::Max(0, $cursor - 1); break }
+
+                    if ($units[$held].Type -eq 'Host') {
+                        if ($held -gt 0) { $tmp = $units[$held - 1]; $units[$held - 1] = $units[$held]; $units[$held] = $tmp; $held--; $cursor = $held }
+                        break
+                    }
+
+                    # 그룹째 옮기기: 앞 그룹 머리를 찾아 그 앞으로. 그룹 없는 Host들 위로는 못 간다(그들이 이 그룹에 들어가 버린다).
+                    $prev = $held - 1
+                    while ($prev -ge 0 -and $units[$prev].Type -ne 'Banner') { $prev-- }
+                    if ($prev -lt 0) { $message = '그룹 없는 Host들보다 위로는 옮길 수 없습니다.'; break }
+
+                    $end = Get-SshConfigUnitRange $units $held
+                    $span = $units.GetRange($held, $end - $held)
+                    $units.RemoveRange($held, $end - $held)
+                    $units.InsertRange($prev, $span)
+                    $held = $prev; $cursor = $prev
+                }
+                'DownArrow' {
+                    if ($held -lt 0) { $cursor = [Math]::Min($units.Count - 1, $cursor + 1); break }
+
+                    if ($units[$held].Type -eq 'Host') {
+                        if ($held -lt $units.Count - 1) { $tmp = $units[$held + 1]; $units[$held + 1] = $units[$held]; $units[$held] = $tmp; $held++; $cursor = $held }
+                        break
+                    }
+
+                    $end = Get-SshConfigUnitRange $units $held
+                    if ($end -ge $units.Count) { $message = '마지막 그룹입니다.'; break }
+                    $nextEnd = Get-SshConfigUnitRange $units $end
+                    $span = $units.GetRange($end, $nextEnd - $end)
+                    $units.RemoveRange($end, $nextEnd - $end)
+                    $units.InsertRange($held, $span)
+                    $held += $span.Count; $cursor = $held
+                }
+                'PageUp' { if ($held -lt 0) { $cursor = [Math]::Max(0, $cursor - 10) } }
+                'PageDown' { if ($held -lt 0) { $cursor = [Math]::Min($units.Count - 1, $cursor + 10) } }
+                'Home' { if ($held -lt 0) { $cursor = 0 } }
+                'End' { if ($held -lt 0) { $cursor = $units.Count - 1 } }
+                'Spacebar' { $held = if ($held -ge 0) { -1 } else { $cursor } }
+                'N' {
+                    $held = -1
+                    $name = & $askName '새 그룹 이름 (지금 줄 위에 만든다, 빈 값이면 취소)'
+                    if (-not $name) { break }
+                    if (@($units | Where-Object { $_.Type -eq 'Banner' -and $_.Name -ieq $name }).Count) { $message = "이미 있는 그룹입니다: $name"; break }
+                    $nextId++
+                    $lines = New-SshConfigBannerLines -Name $name -Style $layout.Style -Width $layout.Width
+                    $units.Insert($cursor, [pscustomobject]@{ Id = $nextId; Type = 'Banner'; Name = $name; Lines = $lines; BannerAt = 0; Style = $layout.Style; Width = $layout.Width; Patterns = @(); HostName = '' })
+                }
+                'R' {
+                    if ($units[$cursor].Type -ne 'Banner') { $message = '그룹 머리 줄에서 r 을 누르세요.'; break }
+                    $held = -1
+                    $name = & $askName ("그룹 이름 [{0}] (빈 값이면 그대로)" -f $units[$cursor].Name)
+                    if (-not $name -or $name -ceq $units[$cursor].Name) { break }
+                    if (@($units | Where-Object { $_.Type -eq 'Banner' -and $_.Name -ieq $name -and $_.Id -ne $units[$cursor].Id }).Count) { $message = "이미 있는 그룹입니다: $name"; break }
+                    $units[$cursor] = & $renameBanner $units[$cursor] $name
+                }
+                'X' {
+                    if ($units[$cursor].Type -ne 'Banner') { $message = '그룹 머리 줄에서 x 를 누르세요.'; break }
+                    $held = -1
+                    $message = "그룹 머리를 지웠습니다: $($units[$cursor].Name) (Host들은 위 그룹으로 들어갑니다)"
+                    $units.RemoveAt($cursor)
+                    $cursor = [Math]::Min($cursor, $units.Count - 1)
+                }
+                'Enter' { $saved = $true; break arrange }
+                'Escape' { break arrange }
+                'Q' { break arrange }
+            }
+        }
+    }
+    finally {
+        # Ctrl+C로 끝나도 화면은 원래대로 돌린다 (파일은 저장하지 않는다).
+        [Console]::Write("$esc[?1049l$esc[?25h")
+    }
+
+    if (-not $saved) {
+        Write-Host '취소했습니다. (파일은 그대로)' -ForegroundColor DarkCyan
+        return $false
+    }
+
+    $now = (@($units | ForEach-Object { "{0}:{1}" -f $_.Id, $_.Name }) -join '|')
+    if ($now -eq $original) {
+        Write-Host '바뀐 것이 없습니다.' -ForegroundColor DarkCyan
+        return $false
+    }
+
+    $layout.Units = $units
+    $newLines = ConvertTo-SshConfigLines -Layout $layout
+    $Doc.Lines.Clear()
+    $Doc.Lines.AddRange($newLines)
+    $true
+}
+
+function ssh-config {
+    # ~/.ssh/config의 Host를 터미널에서 관리한다. 인자 없으면 목록(그룹별), -a 추가 / -e 수정 / -d 삭제 / -m 순서·그룹 정리 (-h 사용법)
+    [CmdletBinding(DefaultParameterSetName = 'List')]
+    param(
+        [Parameter(ParameterSetName = 'List')][Alias('l')][switch]$List,
+        [Parameter(ParameterSetName = 'Add')][Alias('a')][switch]$Add,
+        [Parameter(ParameterSetName = 'Edit')][Alias('e')][switch]$Edit,
+        [Parameter(ParameterSetName = 'Delete')][Alias('d')][switch]$Delete,
+        [Parameter(ParameterSetName = 'Help')][Alias('h')][switch]$Help,
+        [Parameter(ParameterSetName = 'Arrange')][Alias('m')][switch]$Arrange,
+
+        [Parameter(Position = 0)][string[]]$Name,
+        [Parameter(Position = 1, ValueFromRemainingArguments)][string[]]$Rest,
+
+        [Parameter(ParameterSetName = 'Add')][Parameter(ParameterSetName = 'Edit')][Alias('n')][string]$HostName,
+        [Parameter(ParameterSetName = 'Add')][Parameter(ParameterSetName = 'Edit')][Alias('u')][string]$User,
+        [Parameter(ParameterSetName = 'Add')][Parameter(ParameterSetName = 'Edit')][Alias('p')][int]$Port,
+        [Parameter(ParameterSetName = 'Add')][Parameter(ParameterSetName = 'Edit')][Alias('i')][string]$IdentityFile,
+        [Parameter(ParameterSetName = 'Add')][Parameter(ParameterSetName = 'Edit')][Alias('o')][string[]]$Option,
+        [Parameter(ParameterSetName = 'Add')][string]$From,
+        [Parameter(ParameterSetName = 'List')][Parameter(ParameterSetName = 'Add')][Alias('g')][string]$Group,
+        [Parameter(ParameterSetName = 'Edit')][Alias('x')][string[]]$Unset,
+        [Parameter(ParameterSetName = 'Edit')][Alias('rn')][string]$Rename,
+        [Parameter(ParameterSetName = 'Delete')][Alias('y')][switch]$Yes,
+
+        [string]$ConfigPath = "$HOME/.ssh/config"
+    )
+
+    $esc = [char]27
+    $head = "$esc[1;38;2;231;111;81m"
+    $sub = "$esc[38;5;245m"
+    $names = @(@($Name) + @($Rest) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
+    if ($Help -or ($names.Count -eq 1 -and $names[0] -match '^(--?help|[-/]\?|/h)$')) {
+        $usage = @(
+            @('ssh-config [패턴]', 'Host 목록 - 그룹별 (별칭 하나를 정확히 주면 그 Host의 설정 전체)'),
+            @('ssh-config -g <그룹>', '그 그룹의 Host만'),
+            @('ssh-config -a <별칭> <[사용자@]주소[:포트]>', 'Host 추가 (옵션으로 사용자·포트·키 등 지정)'),
+            @('ssh-config -e <별칭> [옵션]', 'Host 수정 (옵션 없이 쓰면 항목마다 물어본다)'),
+            @('ssh-config -d <별칭>... [-y]', 'Host 삭제 (확인 후, 여러 개는 공백·쉼표로)'),
+            @('ssh-config -m', '순서·그룹 정리 화면 - 커서로 Host·그룹을 옮긴다')
+        )
+        $width = ($usage | ForEach-Object { Get-TextDisplayWidth $_[0] } | Measure-Object -Maximum).Maximum + 2
+
+        for ($i = 0; $i -lt $usage.Count; $i++) {
+            $lead = if ($i -eq 0) { '사용법: ' } else { '        ' }
+            $pad = ' ' * ($width - (Get-TextDisplayWidth $usage[$i][0]))
+            Write-Host ("{0}{1}{2}{3}" -f $lead, $usage[$i][0], $pad, $usage[$i][1]) -ForegroundColor Yellow
+        }
+
+        Write-Host "  옵션: -n 주소 / -u 사용자 / -p 포트 / -i 키파일 / -o 키=값 (여러 개는 쉼표) - -a, -e 공통" -ForegroundColor DarkCyan
+        Write-Host "        -From <기존 별칭> (-a: 그 Host의 설정을 복사하고 주소만 새로) / -x 키 (-e: 항목 지우기) / -Rename 새별칭 (-e)" -ForegroundColor DarkCyan
+        Write-Host "        -g 그룹 (-a: 그 그룹 끝에 넣고, 없는 그룹이면 그룹 머리를 새로 만든다. 생략하면 -From의 그룹)" -ForegroundColor DarkCyan
+        Write-Host "  그룹 머리 = 주석 3줄(#####  /  # 이름  /  #####) 또는 1줄(######### 이름 #########). ssh는 주석이라 무시한다." -ForegroundColor DarkCyan
+        Write-Host "  새 Host는 'Host *' 블록 앞에 넣는다 (ssh는 먼저 나온 값을 쓴다). 고치기 전에 config.bak-<시각>으로 백업(최근 5개)." -ForegroundColor DarkCyan
+        Write-Host ("  파일: {0}   (별칭은 Tab 자동완성)" -f $ConfigPath) -ForegroundColor DarkCyan
+        return
+    }
+
+    # 모르는 옵션(예: 예전 -rm)은 남은 인자로 들어와 별칭처럼 처리되므로 여기서 거절한다. (-y와 같이 쓰면 삭제가 돼 버린다)
+    $unknown = @($names | Where-Object { $_.StartsWith('-') })
+    if ($unknown) {
+        Write-Error ("알 수 없는 옵션: {0}  (삭제는 -d, 사용법: ssh-config -h)" -f ($unknown -join ' '))
+        return
+    }
+
+    $ErrorActionPreference = 'Stop'
+
+    try {
+        $mode = $PSCmdlet.ParameterSetName
+
+        switch ($mode) {
+            'List' {
+                $all = @(Get-SshConfigHosts -ConfigPath $ConfigPath)
+                $pattern = if ($names.Count) { $names[0] } else { '' }
+
+                # 별칭 하나를 정확히 주면 그 Host 블록을 그대로 보여준다.
+                $exact = if ($pattern -and -not [System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($pattern)) {
+                    $all | Where-Object { $_.Alias -ieq $pattern } | Select-Object -First 1
+                }
+
+                if ($exact) {
+                    $doc = Read-SshConfigDoc -Path $exact.Source
+                    $block = Get-SshConfigBlockFor -Doc $doc -Alias $exact.Alias
+
+                    Write-Host ("{0}ssh-config:$esc[0m {1}{2}$esc[0m  {0}({3}:{4})$esc[0m" -f $sub, $head, $exact.Alias, $exact.Source, $exact.Line)
+                    for ($i = $block.Start; $i -lt $block.BodyEnd; $i++) { Write-Host ("  {0}" -f $doc.Lines[$i]) }
+                    Show-SshConfigEffective -ConfigPath $ConfigPath -Alias $exact.Alias
+                    return
+                }
+
+                $shown = @(if (-not $pattern) { $all }
+                    elseif ([System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($pattern)) { $all | Where-Object { $_.Alias -like $pattern } }
+                    else { $all | Where-Object { $_.Alias -like "*$pattern*" } })
+
+                # 그룹: 기본 config의 그룹 머리 주석 기준. Include된 파일의 Host는 그 파일 이름으로, 'Host *' 뒤의 Host는 따로 묶는다.
+                $mainPath = [IO.Path]::GetFullPath((Expand-UserPath $ConfigPath))
+                $layout = Get-SshConfigLayout -Doc (Read-SshConfigDoc -Path $mainPath)
+                $groupOf = Get-SshConfigGroupOf $layout.Units
+                $groupNames = @($layout.Units | Where-Object { $_.Type -eq 'Banner' } | ForEach-Object { $_.Name })
+
+                foreach ($h in $all) {
+                    $key = $h.Alias.ToLowerInvariant()
+                    $g = if ($h.Source -ne $mainPath) { "Include: {0}" -f (Split-Path -Leaf $h.Source) }
+                        elseif ($groupOf.ContainsKey($key)) { $groupOf[$key] }
+                        else { 'Host * 뒤' }
+                    Add-Member -InputObject $h -NotePropertyName Group -NotePropertyValue $g -Force
+                }
+
+                $grouped = $layout.HasBanners -or [bool]$Group
+                $sections = @('') + $groupNames + @('Host * 뒤') + @($all | Where-Object { $_.Group -like 'Include: *' } | ForEach-Object { $_.Group } | Select-Object -Unique)
+
+                if ($Group) {
+                    $hit = @($groupNames | Where-Object { $_ -ieq $Group })
+                    if (-not $hit) { $hit = @($groupNames | Where-Object { $_ -like "*$Group*" }) }
+                    if (-not $hit) { throw ("없는 그룹입니다: {0}  (그룹: {1})" -f $Group, $(if ($groupNames) { $groupNames -join ', ' } else { '없음' })) }
+                    $shown = @($shown | Where-Object { $hit -contains $_.Group })
+                    $sections = $hit
+                }
+
+                $summary = if ($grouped) { " · 그룹 {0}개" -f $groupNames.Count } else { '' }
+                Write-Host ("{0}ssh-config:$esc[0m {1}{2}$esc[0m  {0}(Host {3}개{4}{5})$esc[0m" -f $sub, $head, $ConfigPath, $shown.Count, $summary, $(if ($pattern) { " · '$pattern'" } else { '' }))
+
+                if ($shown.Count -eq 0 -and -not $Group) {
+                    $hint = if ($pattern) { '맞는 Host가 없습니다.' } else { '등록된 Host가 없습니다. 추가: ssh-config -a <별칭> <[사용자@]주소>' }
+                    Write-Host ("  {0}" -f $hint) -ForegroundColor Yellow
+                    return
+                }
+
+                $cols = @('별칭', '주소', '사용자', '포트', '키')
+                $rows = @(foreach ($h in $shown) {
+                        , @(@($h.Alias, $h.HostName, $h.User, $h.Port, $h.IdentityFile) | ForEach-Object { if ($_) { [string]$_ } else { '-' } })
+                    })
+                $widths = for ($c = 0; $c -lt $cols.Count; $c++) {
+                    (@(Get-TextDisplayWidth $cols[$c]) + @($rows | ForEach-Object { Get-TextDisplayWidth $_[$c] }) | Measure-Object -Maximum).Maximum
+                }
+                $fmt = {
+                    param($cells)
+                    (@(for ($c = 0; $c -lt $cells.Count; $c++) {
+                            if ($c -eq $cells.Count - 1) { $cells[$c] } else { $cells[$c] + (' ' * ($widths[$c] - (Get-TextDisplayWidth $cells[$c]) + 2)) }
+                        }) -join '').TrimEnd()
+                }
+
+                if (-not $grouped) {
+                    Write-Host ("  {0}{1}$esc[0m" -f $sub, (& $fmt $cols))
+                    for ($r = 0; $r -lt $rows.Count; $r++) {
+                        $note = ''
+                        if ($shown[$r].Shared) { $note += '  (한 Host 줄에 여러 별칭)' }
+                        if (-not (Test-SshConfigIsDefault $shown[$r].Source) -and $shown[$r].Source -ne $mainPath) { $note += ("  ({0})" -f (Split-Path -Leaf $shown[$r].Source)) }
+                        Write-Host ("  {0}{1}{2}$esc[0m" -f (& $fmt $rows[$r]), $sub, $note)
+                    }
+                }
+                else {
+                    # 그룹마다 머리 한 줄 + Host들. 그룹 머리만 있고 Host가 없는 그룹도 보여준다(패턴으로 거를 때는 뺀다).
+                    foreach ($sec in $sections) {
+                        $members = @(for ($r = 0; $r -lt $rows.Count; $r++) { if ($shown[$r].Group -eq $sec) { $r } })
+                        $isBanner = $groupNames -contains $sec
+                        # 번호 0 하나만 든 배열 @(0)은 거짓으로 판정되므로 개수로 본다.
+                        if ($members.Count -eq 0 -and (-not $isBanner -or $pattern)) { continue }
+
+                        $title = if ($sec -eq '') { '(그룹 없음)' } elseif ($isBanner) { "[$sec]" } else { "($sec)" }
+                        $color = if ($isBanner) { "$esc[1;33m" } else { $sub }
+                        $count = if ($members.Count) { "{0}개" -f $members.Count } else { '비어 있음' }
+                        Write-Host ("  {0}{1}$esc[0m  {2}{3}$esc[0m" -f $color, $title, $sub, $count)
+                        # 열 이름은 그룹 머리 아래에 (Host가 있는 그룹마다).
+                        if ($members.Count) { Write-Host ("    {0}{1}$esc[0m" -f $sub, (& $fmt $cols)) }
+
+                        foreach ($r in $members) {
+                            $note = if ($shown[$r].Shared) { '  (한 Host 줄에 여러 별칭)' } else { '' }
+                            Write-Host ("    {0}{1}{2}$esc[0m" -f (& $fmt $rows[$r]), $sub, $note)
+                        }
+                    }
+                }
+
+                Write-Host ("  {0}'-' 는 그 Host에 적지 않은 항목 (Host * 같은 공통 블록이나 ssh 기본값을 쓴다). 자세히: ssh-config <별칭> / 순서·그룹 정리: ssh-config -m$esc[0m" -f $sub)
+            }
+
+            'Add' {
+                if ($names.Count -lt 1 -or -not (Test-SshConfigAliasName $names[0])) {
+                    throw '추가할 별칭을 지정하세요 (공백·와일드카드·따옴표 불가). 사용법: ssh-config -h'
+                }
+                if ($names.Count -gt 2) { throw ("인자가 너무 많습니다: {0}" -f ($names[2..($names.Count - 1)] -join ' ')) }
+
+                $alias = $names[0]
+                $existing = Get-SshConfigHosts -ConfigPath $ConfigPath | Where-Object { $_.Alias -ieq $alias } | Select-Object -First 1
+                if ($existing) { throw ("이미 있는 Host입니다: {0} ({1}:{2}) - 고치려면 ssh-config -e {0}" -f $existing.Alias, $existing.Source, $existing.Line) }
+
+                # 주소는 둘째 인자 [사용자@]주소[:포트] 또는 -n. 둘 다 있으면 -n이 이긴다.
+                $target = @{ User = ''; Host = ''; Port = '' }
+                if ($names.Count -eq 2) {
+                    if ($names[1] -notmatch '^(?:(?<user>[^@\s]+)@)?(?<host>[^@\s:]+)(?::(?<port>\d+))?$') { throw ("주소 형식을 알 수 없습니다: {0} ([사용자@]주소[:포트])" -f $names[1]) }
+                    $target.User = $Matches.user; $target.Host = $Matches.host; $target.Port = $Matches.port
+                }
+
+                $hostValue = if ($HostName) { $HostName } else { $target.Host }
+                if (-not $hostValue) { throw '주소를 지정하세요: ssh-config -a <별칭> <[사용자@]주소[:포트]>' }
+
+                # 넣을 설정을 순서대로 모은다. -From이면 그 Host의 설정(주소 제외)을 그대로 가져온다.
+                $pairs = [System.Collections.Generic.List[object]]::new()
+                $pairs.Add([pscustomobject]@{ Key = 'HostName'; Value = $hostValue })
+
+                if ($From) {
+                    $src = Get-SshConfigHosts -ConfigPath $ConfigPath | Where-Object { $_.Alias -ieq $From } | Select-Object -First 1
+                    if (-not $src) { throw ("복사할 Host가 없습니다: {0}" -f $From) }
+
+                    $srcDoc = Read-SshConfigDoc -Path $src.Source
+                    $srcBlock = Get-SshConfigBlockFor -Doc $srcDoc -Alias $src.Alias
+                    for ($i = $srcBlock.Start + 1; $i -lt $srcBlock.BodyEnd; $i++) {
+                        $kv = Get-SshConfigKeyLine $srcDoc.Lines[$i]
+                        if ($kv -and $kv.Key -ine 'HostName') { $pairs.Add([pscustomobject]@{ Key = $kv.Key; Value = $kv.Value }) }
+                    }
+                }
+
+                $setPair = {
+                    param([string]$Key, [string]$Value)
+                    $hit = -1
+                    for ($n = $pairs.Count - 1; $n -ge 1; $n--) {
+                        if ($pairs[$n].Key -ieq $Key) {
+                            if ($hit -ge 0) { $pairs.RemoveAt($hit) }
+                            $hit = $n
+                        }
+                    }
+                    if ($hit -ge 0) { $pairs[$hit] = [pscustomobject]@{ Key = $pairs[$hit].Key; Value = $Value } }
+                    else { $pairs.Add([pscustomobject]@{ Key = $Key; Value = $Value }) }
+                }
+
+                $userValue = if ($User) { $User } else { $target.User }
+                $portValue = if ($PSBoundParameters.ContainsKey('Port')) { [string]$Port } else { $target.Port }
+                if ($userValue) { & $setPair 'User' $userValue }
+                if ($portValue) { & $setPair 'Port' $portValue }
+                if ($IdentityFile) { & $setPair 'IdentityFile' $IdentityFile }
+
+                foreach ($text in @($Option)) {
+                    if (-not $text) { continue }
+                    $opt = ConvertFrom-SshConfigOption $text
+                    if (-not $opt) { throw ("-o 는 키=값 꼴이어야 합니다: {0}" -f $text) }
+                    & $setPair $opt.Key $opt.Value
+                }
+
+                $doc = Read-SshConfigDoc -Path ([IO.Path]::GetFullPath((Expand-UserPath $ConfigPath)))
+                $indent = Get-SshConfigIndent -Doc $doc -Block $null
+                $newLines = @("Host $alias") + @($pairs | ForEach-Object { "{0}{1} {2}" -f $indent, $_.Key, (Format-SshConfigValue $_.Value) })
+
+                # 넣을 자리: 그룹을 주면(-g, 없으면 -From의 그룹) 그 그룹 끝. 그룹을 안 주면 첫 그룹 머리 앞(= 그룹 없는 Host들 끝),
+                # 그룹 머리가 하나도 없으면 'Host *'·Match 앞(그 위 설명 주석보다 앞). ssh는 먼저 나온 값을 쓰므로 공통 블록보다 앞이어야 한다.
+                $layout = Get-SshConfigLayout -Doc $doc
+                $units = @($layout.Units)
+                $banners = @($units | Where-Object { $_.Type -eq 'Banner' })
+
+                $targetGroup = $Group
+                if (-not $targetGroup -and $From) {
+                    $fromGroup = (Get-SshConfigGroupOf $units)[$From.ToLowerInvariant()]
+                    if ($fromGroup) { $targetGroup = $fromGroup }
+                }
+
+                $placed = ''
+
+                if ($targetGroup) {
+                    # 그룹 이름은 정확히 같은 것, 없으면 일부만 맞는 것이 하나일 때 그것. 그래도 없으면 새 그룹을 만든다.
+                    $match = @($banners | Where-Object { $_.Name -ieq $targetGroup })
+                    if (-not $match) { $match = @($banners | Where-Object { $_.Name -like "*$targetGroup*" }) }
+
+                    if ($match.Count -eq 1) {
+                        $bi = [array]::IndexOf($units, $match[0])
+                        $end = Get-SshConfigUnitRange $units $bi
+                        $gap = if ($end -eq $bi + 1) { $layout.BannerGap } else { 1 }
+                        Add-SshConfigLinesAt -Doc $doc -At $units[$end - 1].EndLine -Lines $newLines -Gap $gap
+                        $placed = "그룹 [{0}]" -f $match[0].Name
+                    }
+                    elseif ($match.Count -gt 1) {
+                        throw ("그룹 이름이 여럿과 맞습니다: {0} - 정확한 이름을 주세요." -f (($match | ForEach-Object { $_.Name }) -join ', '))
+                    }
+                    else {
+                        $banner = New-SshConfigBannerLines -Name $targetGroup -Style $layout.Style -Width $layout.Width
+                        $chunk = @($banner) + @(for ($k = 0; $k -lt $layout.BannerGap; $k++) { '' }) + @($newLines)
+                        Add-SshConfigLinesAt -Doc $doc -At $layout.RegionEnd -Lines $chunk
+                        $placed = "새 그룹 [{0}]" -f $targetGroup
+                    }
+                }
+                elseif ($banners) {
+                    Add-SshConfigLinesAt -Doc $doc -At $banners[0].StartLine -Lines $newLines
+                    $placed = '그룹 없음'
+                }
+                else {
+                    Add-SshConfigLinesAt -Doc $doc -At $layout.RegionEnd -Lines $newLines
+                }
+
+                $backup = Save-SshConfigDoc -Doc $doc
+                $where = if ($placed) { "  [$placed]" } else { '' }
+                Write-Host ("Host를 추가했습니다: {0}{1}$esc[0m{2}  {3}{4}$esc[0m" -f $head, $alias, $where, $sub, $(if ($backup) { "(백업: $backup)" } else { "(새 파일: $($doc.Path))" })) -ForegroundColor Green
+                $newLines | ForEach-Object { Write-Host ("  {0}" -f $_) }
+                Show-SshConfigEffective -ConfigPath $ConfigPath -Alias $alias -Backup $backup
+                Clear-SshConfigCache -Alias $alias
+            }
+
+            'Arrange' {
+                # 기본 config 안의 Host·그룹만 옮긴다 (Include된 파일, 'Host *'·Match부터 끝은 자리 고정).
+                $doc = Read-SshConfigDoc -Path ([IO.Path]::GetFullPath((Expand-UserPath $ConfigPath)))
+                if (Invoke-SshConfigArrange -Doc $doc) {
+                    $backup = Save-SshConfigDoc -Doc $doc
+                    Write-Host ("순서·그룹을 저장했습니다.  {0}(백업: {1})$esc[0m" -f $sub, $backup) -ForegroundColor Green
+                    ssh-config -ConfigPath $ConfigPath
+                }
+            }
+
+            'Edit' {
+                if ($names.Count -ne 1) { throw '수정할 별칭 하나를 지정하세요. 사용법: ssh-config -h' }
+
+                $found = Get-SshConfigHosts -ConfigPath $ConfigPath | Where-Object { $_.Alias -ieq $names[0] } | Select-Object -First 1
+                if (-not $found) { throw ("없는 Host입니다: {0} (목록: ssh-config)" -f $names[0]) }
+
+                $alias = $found.Alias
+                $doc = Read-SshConfigDoc -Path $found.Source
+
+                # 바꿀 항목을 모은다. 아무것도 주지 않으면 항목마다 물어본다.
+                $sets = [ordered]@{}
+                $unsets = @()
+
+                if ($PSBoundParameters.ContainsKey('HostName')) { $sets['HostName'] = $HostName }
+                if ($PSBoundParameters.ContainsKey('User')) { $sets['User'] = $User }
+                if ($PSBoundParameters.ContainsKey('Port')) { $sets['Port'] = [string]$Port }
+                if ($PSBoundParameters.ContainsKey('IdentityFile')) { $sets['IdentityFile'] = $IdentityFile }
+
+                foreach ($text in @($Option)) {
+                    if (-not $text) { continue }
+                    $opt = ConvertFrom-SshConfigOption $text
+                    if (-not $opt) { throw ("-o 는 키=값 꼴이어야 합니다: {0}" -f $text) }
+                    $sets[$opt.Key] = $opt.Value
+                }
+
+                foreach ($key in @($Unset | Where-Object { $_ })) {
+                    if ($key -notmatch '^[A-Za-z][A-Za-z0-9]*$') { throw ("지울 항목 이름이 이상합니다: {0}" -f $key) }
+                    $unsets += $key
+                }
+
+                if ($Rename -and -not (Test-SshConfigAliasName $Rename)) { throw ("새 별칭으로 쓸 수 없는 이름입니다: {0}" -f $Rename) }
+                if ($Rename -and $Rename -ine $alias) {
+                    $dup = Get-SshConfigHosts -ConfigPath $ConfigPath | Where-Object { $_.Alias -ieq $Rename } | Select-Object -First 1
+                    if ($dup) { throw ("이미 있는 Host입니다: {0}" -f $dup.Alias) }
+                }
+
+                $block = Get-SshConfigBlockFor -Doc $doc -Alias $alias
+
+                # 한 Host 줄에 별칭이 여럿이면(Host a b) 값을 바꾸면 함께 바뀐다 - 이름 바꾸기만 한다. (물어보기 전에 먼저 거른다)
+                $shared = $block.Patterns.Count -gt 1
+                if ($shared -and -not $Rename -and $sets.Count -eq 0 -and $unsets.Count -eq 0) {
+                    throw ("이 Host 줄에는 다른 별칭도 함께 있습니다 ({0}). 값을 바꾸면 모두 바뀌므로 여기서는 고치지 않습니다 ({1}:{2}). 이름만 바꾸려면 -Rename." -f ($block.Patterns -join ' '), $found.Source, $found.Line)
+                }
+
+                if ($sets.Count -eq 0 -and $unsets.Count -eq 0 -and -not $Rename) {
+                    Write-Host ("{0}ssh-config:$esc[0m {1}{2}$esc[0m 수정  {0}(Enter: 그대로 / - : 지우기)$esc[0m" -f $sub, $head, $alias)
+
+                    foreach ($field in @(@('HostName', '주소'), @('User', '사용자'), @('Port', '포트'), @('IdentityFile', '키 파일'))) {
+                        $current = Get-SshConfigBlockValue -Doc $doc -Block $block -Key $field[0]
+                        $answer = Read-Host ("  {0} [{1}]" -f $field[1], $(if ($current) { $current } else { '-' }))
+                        $answer = ([string]$answer).Trim()
+
+                        if (-not $answer) { continue }
+                        if ($answer -eq '-') {
+                            if ($field[0] -eq 'HostName') { Write-Host '    주소는 지울 수 없습니다 - 그대로 둡니다.' -ForegroundColor Yellow; continue }
+                            if ($current) { $unsets += $field[0] }
+                            continue
+                        }
+                        if ($field[0] -eq 'Port' -and $answer -notmatch '^\d+$') { Write-Host '    포트는 숫자여야 합니다 - 그대로 둡니다.' -ForegroundColor Yellow; continue }
+                        if ($answer -ne $current) { $sets[$field[0]] = $answer }
+                    }
+
+                    if ($sets.Count -eq 0 -and $unsets.Count -eq 0) { Write-Host '바뀐 것이 없습니다.' -ForegroundColor DarkCyan; return }
+                }
+
+                if ($shared -and ($sets.Count -or $unsets.Count)) {
+                    throw ("이 Host 줄에는 다른 별칭도 함께 있습니다 ({0}). 값을 바꾸면 모두 바뀌므로 여기서는 고치지 않습니다 ({1}:{2})." -f ($block.Patterns -join ' '), $found.Source, $found.Line)
+                }
+
+                $changes = @()
+
+                foreach ($key in $sets.Keys) {
+                    Set-SshConfigKey -Doc $doc -Block (Get-SshConfigBlockFor -Doc $doc -Alias $alias) -Key $key -Value $sets[$key]
+                    $changes += ("{0} = {1}" -f $key, $sets[$key])
+                }
+
+                foreach ($key in $unsets) {
+                    $count = Remove-SshConfigKey -Doc $doc -Block (Get-SshConfigBlockFor -Doc $doc -Alias $alias) -Key $key
+                    if ($count) { $changes += ("{0} 지움" -f $key) } else { Write-Host ("  {0} 항목은 원래 없습니다." -f $key) -ForegroundColor Yellow }
+                }
+
+                if ($Rename -and $Rename -cne $alias) {
+                    $block = Get-SshConfigBlockFor -Doc $doc -Alias $alias
+                    $tokens = @($block.Patterns | ForEach-Object { if ($_ -ieq $alias) { $Rename } else { $_ } })
+                    $doc.Lines[$block.Start] = "{0}{1} {2}" -f $block.Indent, $block.Keyword, ($tokens -join ' ')
+                    $changes += ("별칭 {0} -> {1}" -f $alias, $Rename)
+                }
+
+                if (-not $changes) { Write-Host '바뀐 것이 없습니다.' -ForegroundColor DarkCyan; return }
+
+                $backup = Save-SshConfigDoc -Doc $doc
+                $finalName = if ($Rename) { $Rename } else { $alias }
+
+                Write-Host ("Host를 수정했습니다: {0}{1}$esc[0m  {2}(백업: {3})$esc[0m" -f $head, $finalName, $sub, $backup) -ForegroundColor Green
+                $changes | ForEach-Object { Write-Host ("  {0}" -f $_) }
+                Show-SshConfigEffective -ConfigPath $ConfigPath -Alias $finalName -Backup $backup
+                Clear-SshConfigCache -Alias @($alias, $Rename)
+            }
+
+            'Delete' {
+                # 쉼표로 묶어 줘도 되게 한 번 더 나눈다.
+                $wanted = @($names | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique)
+                if (-not $wanted) { throw '삭제할 별칭을 지정하세요. 사용법: ssh-config -h' }
+
+                $all = @(Get-SshConfigHosts -ConfigPath $ConfigPath)
+                $targets = @(foreach ($w in $wanted) {
+                        $hit = $all | Where-Object { $_.Alias -ieq $w } | Select-Object -First 1
+                        if ($hit) { $hit } else { Write-Warning ("없는 Host라 건너뜀: {0}" -f $w) }
+                    })
+                if (-not $targets) { return }
+
+                Write-Host ("{0}ssh-config:$esc[0m 삭제할 Host {1}개" -f $sub, $targets.Count)
+                foreach ($t in $targets) {
+                    $note = if ($t.Shared) { '  (같은 Host 줄의 다른 별칭은 남긴다)' } else { '' }
+                    Write-Host ("  {0}{1}$esc[0m  {2}{3}{4}$esc[0m" -f $head, $t.Alias, $sub, $(if ($t.HostName) { $t.HostName } else { '-' }), $note)
+                }
+
+                if (-not $Yes) {
+                    $answer = Read-Host '삭제할까요? (y/N)'
+                    if ($answer -notmatch '^(y|yes)$') { Write-Host '취소했습니다.' -ForegroundColor DarkGray; return }
+                }
+
+                # ($group 이라 쓰면 -Group 매개변수와 같은 변수가 된다)
+                foreach ($fileGroup in @($targets | Group-Object Source)) {
+                    $doc = Read-SshConfigDoc -Path $fileGroup.Name
+
+                    foreach ($t in $fileGroup.Group) {
+                        $block = Get-SshConfigBlockFor -Doc $doc -Alias $t.Alias
+                        if (-not $block) { continue }
+
+                        if ($block.Patterns.Count -gt 1) {
+                            # 다른 별칭과 같이 쓰는 줄이면 이 별칭만 줄에서 뺀다.
+                            $tokens = @($block.Patterns | Where-Object { $_ -ine $t.Alias })
+                            $doc.Lines[$block.Start] = "{0}{1} {2}" -f $block.Indent, $block.Keyword, ($tokens -join ' ')
+                            continue
+                        }
+
+                        $doc.Lines.RemoveRange($block.Start, $block.BodyEnd - $block.Start)
+                        Remove-SshConfigBlankRun -Doc $doc -At $block.Start
+                    }
+
+                    $backup = Save-SshConfigDoc -Doc $doc
+                    Write-Host ("삭제했습니다: {0}  {1}(백업: {2})$esc[0m" -f (($fileGroup.Group | ForEach-Object { $_.Alias }) -join ', '), $sub, $backup) -ForegroundColor Green
+                }
+
+                Clear-SshConfigCache -Alias @($targets | ForEach-Object { $_.Alias })
+            }
+        }
+    }
+    catch { Write-Error -Message $_.Exception.Message -ErrorAction Continue }
+}
+
+# ssh-config 별칭 Tab 자동완성 (목록·수정·삭제할 Host, -From으로 복사할 Host). config 파싱만, 네트워크 조회 없음.
+$sshConfigAliasCompleter = {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+    # 추가할 때의 별칭·주소는 새 이름이라 기존 별칭을 보여줄 이유가 없다 (-From만 기존 별칭).
+    if ($fakeBoundParameters.ContainsKey('Add') -and $parameterName -ne 'From') { return }
+
+    $path = if ($fakeBoundParameters.ContainsKey('ConfigPath')) { [string]$fakeBoundParameters['ConfigPath'] } else { "$HOME/.ssh/config" }
+    if (-not (Test-Path -LiteralPath (Expand-UserPath $path))) { return }
+
+    $word = $wordToComplete.Trim("'`"")
+    $seen = @{}
+
+    foreach ($entry in Get-SshAliasesFromConfigFile -Path $path -Visited @{}) {
+        $key = $entry.Alias.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+
+        if ($word -and -not $entry.Alias.StartsWith($word, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+        [System.Management.Automation.CompletionResult]::new($entry.Alias, $entry.Alias, 'ParameterValue', $entry.Alias)
+    }
+}
+
+Register-ArgumentCompleter -CommandName ssh-config -ParameterName Name -ScriptBlock $sshConfigAliasCompleter
+Register-ArgumentCompleter -CommandName ssh-config -ParameterName Rest -ScriptBlock $sshConfigAliasCompleter
+Register-ArgumentCompleter -CommandName ssh-config -ParameterName From -ScriptBlock $sshConfigAliasCompleter
+Register-ArgumentCompleter -CommandName ssh-config -ParameterName Group -ScriptBlock {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+    $path = if ($fakeBoundParameters.ContainsKey('ConfigPath')) { [string]$fakeBoundParameters['ConfigPath'] } else { "$HOME/.ssh/config" }
+    $full = [IO.Path]::GetFullPath((Expand-UserPath $path))
+    if (-not (Test-Path -LiteralPath $full)) { return }
+
+    $word = $wordToComplete.Trim("'`"")
+    $layout = Get-SshConfigLayout -Doc (Read-SshConfigDoc -Path $full)
+    foreach ($u in $layout.Units) {
+        if ($u.Type -ne 'Banner' -or ($word -and $u.Name -notlike "*$word*")) { continue }
+        $text = if ($u.Name -match '\s') { "'" + $u.Name + "'" } else { $u.Name }
+        [System.Management.Automation.CompletionResult]::new($text, $u.Name, 'ParameterValue', $u.Name)
+    }
+}
+Remove-Variable -Name sshConfigAliasCompleter
+
+#########################################################
+# ssh config 편집 (ssh-config) 영역 End
+#########################################################
+
+
+#########################################################
 # SCP 파일 전송 / 원격 조회 (up/dn/rr/rl/rt/rs) 영역 Start
 #########################################################
 
@@ -4685,7 +5893,12 @@ function ssh-help {
     Add-Cmd "sb <SV> <DST>"    "SV와 DST를 한 번에 선택 (= ss + sd, 두 인자 모두 Tab 자동완성)"
     Add-Cmd "xs"               "SV 해제 (원격 작업 디렉터리 SVDIR도 함께 해제)"
     Add-Cmd "xd"               "DST 해제"
-    Add-Cmd "ssh-config"       "ssh config 파일을 편집기로 연다"
+    Add-Cmd "ssh-config [패턴]" "ssh config의 Host 목록 (별칭 하나를 정확히 주면 그 Host의 설정 전체)"
+    Add-Note "추가: ssh-config -a <별칭> <[사용자@]주소[:포트]> [-p 포트] [-i 키] [-From <기존 별칭>]"
+    Add-Note "수정: ssh-config -e <별칭> [-n 주소] [-u 사용자] [-p 포트] [-o 키=값] [-x 키] [-Rename 새별칭] - 옵션 없이 쓰면 항목마다 물어본다"
+    Add-Note "삭제: ssh-config -d <별칭>... [-y]. 고칠 때마다 config.bak-<시각>으로 백업(최근 5개), 새 Host는 Host * 앞에 넣는다"
+    Add-Note "그룹: 주석 3줄(#####/# 이름/#####) 또는 1줄(### 이름 ###)을 그룹 머리로 읽어 목록을 그룹별로 보여준다. ssh-config -g <그룹> 으로 거르기"
+    Add-Note "ssh-config -a ... -g <그룹> 은 그 그룹 끝에 넣는다(없는 그룹이면 새로 만듦). ssh-config -m = 커서로 Host·그룹 순서를 바꾸는 화면"
 
     Add-Section "설정되는 변수"
     Add-Cmd "`$SV  `$SVID"      "선택한 Host 별칭 / 접속 계정 (ssh -G의 User)"
@@ -4800,7 +6013,8 @@ function ssh-help {
     # ── 5. 사용 예시 ─────────────────────────────────────────────
     Add-Title "[ 5. 사용 예시 ]"
     Add-Section "새 서버 처음 붙이기"
-    Add-Plain "    ss newhost          # 서버 선택 (ssh config에 Host를 먼저 등록)"
+    Add-Plain "    ssh-config -a newhost root@10.0.0.5   # ssh config에 Host 등록"
+    Add-Plain "    ss newhost          # 서버 선택"
     Add-Plain "    init-sv             # 공개키 등록 -> 탭 제목 보호까지 한 번에"
     Add-Plain "    rs                  # 올라온 서버 상태 요약으로 접속 확인"
     Add-Section "로그 한 개 받아오기"
