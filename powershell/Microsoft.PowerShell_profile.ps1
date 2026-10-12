@@ -4736,7 +4736,7 @@ function ssh-help {
     Add-Note "명령 실행 중인 pane은 상태를 답할 수 없어 어느 pane인지 알려준다 (Ctrl+C로 멈춘 뒤 다시 저장, -f면 구조만 저장)"
     Add-Note "복원하면 SV/DST/SVDIR·작업 경로·제목·탭 색이 돌아오고, 실행 중이던 명령은 히스토리에 들어간다(위 화살표)"
     Add-Cmd "fld"              "여러 폴더를 탐색기 한 창의 탭으로 열고, 탭 묶음을 세트로 저장해 다시 연다"
-    Add-Note "fld (목록) / fld -o <세트|경로>... / fld -s <세트> [-Force] / fld -a <세트> [경로...]"
+    Add-Note "fld (현재 폴더 열기) / fld <세트|경로>... / fld -l [세트] (목록·내용) / fld -s <세트> [-Force] / fld -a <세트> [경로...]"
     Add-Note "fld -rm <세트> <경로|번호>... / fld -del <세트> / 사용법은 fld -h"
     Add-Note "-o는 새 창 하나에 탭으로 연다(세트와 경로를 섞어도 된다). -s는 가장 앞의 탐색기 창에 열린 탭들을 저장한다"
     Add-Note "-a에서 경로를 생략하면 현재 위치. 내 PC 같은 특수 폴더는 따옴표로 감싼다 ('::{GUID}')"
@@ -6852,15 +6852,15 @@ function Get-FldFrontTabs {
 }
 
 function fld {
-    # 여러 폴더를 탐색기 한 창의 탭으로 연다. 탭 묶음을 세트로 저장·추가·제거 (-h 사용법)
-    [CmdletBinding(DefaultParameterSetName = 'List')]
+    # 여러 폴더를 탐색기 한 창의 탭으로 연다(인자 없으면 현재 폴더). 탭 묶음을 세트로 저장·추가·제거 (-l 세트 목록, -h 사용법)
+    [CmdletBinding(DefaultParameterSetName = 'Open')]
     param(
         [Parameter(ParameterSetName = 'Open')][Alias('o')][switch]$Open,
         [Parameter(ParameterSetName = 'Save')][Alias('s')][switch]$Save,
         [Parameter(ParameterSetName = 'Add')][Alias('a')][switch]$Add,
         [Parameter(ParameterSetName = 'Remove')][Alias('rm')][switch]$Remove,
         [Parameter(ParameterSetName = 'Delete')][Alias('del')][switch]$Delete,
-        [Parameter(ParameterSetName = 'List')][Alias('ls')][switch]$List,
+        [Parameter(ParameterSetName = 'List')][Alias('l', 'ls')][switch]$List,
         [Parameter(ParameterSetName = 'Help')][Alias('h')][switch]$Help,
         [Parameter(Position = 0)][string]$Name,
         [Parameter(Position = 1, ValueFromRemainingArguments)][string[]]$Path,
@@ -6869,13 +6869,13 @@ function fld {
 
     if ($Help -or $Name -match '^(--?help|[-/]\?|/h)$') {
         # 설명 시작 칸을 맞추려고 한글(2칸) 폭 기준으로 공백을 넣었다
-        Write-Host "사용법: fld -Open <세트|경로>...           새 탐색기 창 하나에 탭으로 연다 (세트와 경로를 섞어도 된다)" -ForegroundColor Yellow
+        Write-Host "사용법: fld [세트|경로]...                 새 탐색기 창 하나에 탭으로 연다 (생략하면 현재 폴더, 세트와 경로를 섞어도 된다)" -ForegroundColor Yellow
+        Write-Host "        fld -List [세트]                   세트 목록 / 세트 내용" -ForegroundColor Yellow
         Write-Host "        fld -Save <세트> [-Force]          가장 앞의 탐색기 창에 열린 탭들을 세트로 저장 (-Force: 덮어쓰기)" -ForegroundColor Yellow
         Write-Host "        fld -Add <세트> [경로...]          세트에 폴더 추가 (경로를 생략하면 현재 위치, 없는 세트는 새로 만든다)" -ForegroundColor Yellow
         Write-Host "        fld -Remove <세트> <경로|번호>...  세트에서 제거 (번호는 목록의 순번)" -ForegroundColor Yellow
         Write-Host "        fld -Delete <세트>                 세트 삭제" -ForegroundColor Yellow
-        Write-Host "        fld [-List] [세트]                 세트 목록 / 세트 내용 (옵션 없이 실행하면 이것)" -ForegroundColor Yellow
-        Write-Host "  짧은 옵션: -o -s -a -rm -del -ls. 세트 이름은 Tab 자동완성." -ForegroundColor DarkCyan
+        Write-Host "  짧은 옵션: -l(-ls) -s -a -rm -del. 여는 것은 옵션이 필요 없다(-o 를 붙여도 같다). 세트 이름은 Tab 자동완성." -ForegroundColor DarkCyan
         Write-Host "  내 PC 같은 특수 폴더는 따옴표로 감싼다: fld -a 작업 '::{20D04FE0-3AEA-1069-A2D8-08002B30309D}'" -ForegroundColor DarkCyan
         Write-Host "  세트 파일: $global:fld_store_file" -ForegroundColor DarkCyan
         return
@@ -6890,8 +6890,9 @@ function fld {
 
         switch ($mode) {
             'Open' {
+                # 아무것도 주지 않으면 지금 있는 폴더를 연다.
                 $targets = @(@($Name) + @($Path) | Where-Object { $_ })
-                if (-not $targets) { throw '열 세트 이름이나 경로를 지정하세요. (사용법: fld -h)' }
+                if (-not $targets) { $targets = @('.') }
                 $expanded = foreach ($t in $targets) { if ($sets.Contains($t)) { $sets[$t] } else { $t } }
                 $ok = @(foreach ($p in $expanded) {
                         $r = Resolve-FldPath $p
@@ -6950,7 +6951,7 @@ function fld {
                 Show-FldSet $Name $old
             }
             'List' {
-                if ($Path) { throw '경로를 넣으려면 -Add, 열려면 -Open을 붙이세요. (사용법: fld -h)' }
+                if ($Path) { throw '세트 내용은 하나씩 봅니다. 경로를 넣으려면 -Add, 열려면 -List 없이 fld <세트|경로>. (사용법: fld -h)' }
                 if ($Name) {
                     if (-not $sets.Contains($Name)) { throw "없는 세트입니다: $Name" }
                     Show-FldSet $Name $sets[$Name]
