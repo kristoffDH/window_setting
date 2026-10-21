@@ -289,10 +289,11 @@ function upload-cfg
     cp $profile ./powershell/
     # 스크립트 로더(script-loader.ps1)와 자동 로드 폴더($my_scripts_dir)의 스크립트도 백업한다.
     # init-cds.ps1은 장비 내부 이름이 들어 있어 저장소에 올리지 않는다.
+    # todo-md.ps1은 my-todo 저장소(pwsh\ 사본)에서 관리하므로 올리지 않는다(2026-10-20 사용자 결정).
     cp $script_loader_file ./powershell/
     if ($global:my_scripts_dir -and (Test-Path $global:my_scripts_dir)) {
         $null = New-Item -ItemType Directory -Force -Path ./powershell/scripts
-        cp (Join-Path $global:my_scripts_dir '*.ps1') ./powershell/scripts/ -Exclude 'init-cds.ps1'
+        cp (Join-Path $global:my_scripts_dir '*.ps1') ./powershell/scripts/ -Exclude 'init-cds.ps1', 'todo-md.ps1'
     }
     # oh-my-posh 테마도 같은 저장소의 omp-mytheme 폴더로 복사한다.
     cp $omp_config_file ./omp-mytheme/
@@ -3458,6 +3459,76 @@ function Invoke-SshConfigArrange {
     $true
 }
 
+function Read-SshConfigAddAnswers {
+    # fnc-ignore
+    # ssh-config -a 를 인자 없이 썼을 때 항목마다 묻는다. 한 줄 입력과 같은 값(Names·IdentityFile·Group)을 돌려주고, 취소면 $null.
+    param([string]$ConfigPath)
+
+    $esc = [char]27
+    $sub = "$esc[38;5;245m"
+    $hosts = @(Get-SshConfigHosts -ConfigPath $ConfigPath)
+    $ask = { param([string]$Label) ([string](Read-Host ("  {0}" -f $Label))).Trim() }
+    $warn = { param([string]$Text) Write-Host ("    {0}" -f $Text) -ForegroundColor Yellow }
+
+    Write-Host ("{0}ssh-config:$esc[0m Host 추가  {0}(별칭·주소에서 Enter: 취소 / 나머지 Enter: 넣지 않음, [ ] 안은 Enter로 그대로)$esc[0m" -f $sub)
+
+    while ($true) {
+        $alias = & $ask '별칭'
+        if (-not $alias) { return $null }
+        $dup = $hosts | Where-Object { $_.Alias -ieq $alias } | Select-Object -First 1
+        if (-not (Test-SshConfigAliasName $alias)) { & $warn '공백·와일드카드·따옴표·#은 쓸 수 없습니다.' }
+        elseif ($dup) { & $warn ("이미 있는 Host입니다 ({0}:{1}). 고치려면 ssh-config -e {2}" -f $dup.Source, $dup.Line, $dup.Alias) }
+        else { break }
+    }
+
+    # 주소 칸에 사용자@·:포트를 같이 적으면 아래 사용자·포트 칸의 기본값이 된다.
+    while ($true) {
+        $addr = & $ask '주소 ([사용자@]주소[:포트])'
+        if (-not $addr) { return $null }
+        if ($addr -match '^(?:(?<user>[^@\s]+)@)?(?<host>[^@\s:]+)(?::(?<port>\d+))?$') {
+            $hostValue = $Matches.host; $userValue = [string]$Matches.user; $portValue = [string]$Matches.port
+            break
+        }
+        & $warn '형식: [사용자@]주소[:포트]  예) 10.0.0.5 / root@10.0.0.5 / root@10.0.0.5:2222'
+    }
+
+    $askOr = {
+        param([string]$Label, [string]$Current)
+        $answer = & $ask $(if ($Current) { "{0} [{1}]" -f $Label, $Current } else { $Label })
+        if ($answer) { $answer } else { $Current }
+    }
+
+    # 잘못 넣으면 같은 기본값으로 다시 묻는다.
+    $userDefault = $userValue
+    while ($true) {
+        $userValue = & $askOr '사용자' $userDefault
+        if (-not $userValue -or $userValue -match '^[^@\s:]+$') { break }
+        & $warn '사용자 이름에는 공백·@·:를 쓸 수 없습니다.'
+    }
+
+    $portDefault = $portValue
+    while ($true) {
+        $portValue = & $askOr '포트' $portDefault
+        if (-not $portValue -or ($portValue -match '^\d+$' -and [int64]$portValue -ge 1 -and [int64]$portValue -le 65535)) { break }
+        & $warn '포트는 1~65535 숫자입니다.'
+    }
+
+    $keyValue = & $ask '키 파일'
+    if ($keyValue -and -not (Test-Path -LiteralPath (Expand-UserPath $keyValue))) { & $warn '이 PC에 없는 파일입니다 (그대로 넣습니다).' }
+
+    # 그룹: 기본 config의 그룹 머리 이름을 보여준다. 없는 이름이면 -g 처럼 새 그룹 머리를 만든다.
+    $mainPath = [IO.Path]::GetFullPath((Expand-UserPath $ConfigPath))
+    $groupNames = @((Get-SshConfigLayout -Doc (Read-SshConfigDoc -Path $mainPath)).Units | Where-Object { $_.Type -eq 'Banner' } | ForEach-Object { $_.Name })
+    $groupLabel = if ($groupNames) { "그룹 (있는 그룹: {0} / 새 이름이면 새 그룹)" -f ($groupNames -join ', ') } else { '그룹 (이름을 주면 그룹 머리를 새로 만든다)' }
+    $groupValue = & $ask $groupLabel
+
+    $addrText = "{0}{1}{2}" -f $(if ($userValue) { "$userValue@" }), $hostValue, $(if ($portValue) { ":$portValue" })
+    $summary = "{0} → {1}{2}{3}" -f $alias, $addrText, $(if ($keyValue) { "  키: $keyValue" }), $(if ($groupValue) { "  그룹: $groupValue" })
+    if ((Read-Host ("  추가할까요? {0} (Y/n)" -f $summary)) -match '^\s*(n|no)\s*$') { return $null }
+
+    [pscustomobject]@{ Names = @($alias, $addrText); IdentityFile = $keyValue; Group = $groupValue }
+}
+
 function ssh-config {
     # ~/.ssh/config의 Host를 터미널에서 관리한다. 인자 없으면 목록(그룹별), -a 추가 / -e 수정 / -d 삭제 / -m 순서·그룹 정리 (-h 사용법)
     [CmdletBinding(DefaultParameterSetName = 'List')]
@@ -3496,6 +3567,7 @@ function ssh-config {
             @('ssh-config [패턴]', 'Host 목록 - 그룹별 (별칭 하나를 정확히 주면 그 Host의 설정 전체)'),
             @('ssh-config -g <그룹>', '그 그룹의 Host만'),
             @('ssh-config -a <별칭> <[사용자@]주소[:포트]>', 'Host 추가 (옵션으로 사용자·포트·키 등 지정)'),
+            @('ssh-config -a', 'Host 추가 - 별칭·주소·사용자·포트·키·그룹을 차례로 묻는다'),
             @('ssh-config -e <별칭> [옵션]', 'Host 수정 (옵션 없이 쓰면 항목마다 물어본다)'),
             @('ssh-config -d <별칭>... [-y]', 'Host 삭제 (확인 후, 여러 개는 공백·쉼표로)'),
             @('ssh-config -m', '순서·그룹 정리 화면 - 커서로 Host·그룹을 옮긴다')
@@ -3636,6 +3708,16 @@ function ssh-config {
             }
 
             'Add' {
+                # -a 뒤에 아무것도 없으면 항목마다 물어서 한 줄 입력과 같은 값으로 채운다.
+                $addOptions = @('HostName', 'User', 'Port', 'IdentityFile', 'Option', 'From', 'Group')
+                if ($names.Count -eq 0 -and -not @($addOptions | Where-Object { $PSBoundParameters.ContainsKey($_) })) {
+                    $asked = Read-SshConfigAddAnswers -ConfigPath $ConfigPath
+                    if (-not $asked) { Write-Host ("{0}취소했습니다.$esc[0m" -f $sub); return }
+                    $names = $asked.Names
+                    $IdentityFile = $asked.IdentityFile
+                    $Group = $asked.Group
+                }
+
                 if ($names.Count -lt 1 -or -not (Test-SshConfigAliasName $names[0])) {
                     throw '추가할 별칭을 지정하세요 (공백·와일드카드·따옴표 불가). 사용법: ssh-config -h'
                 }
@@ -5894,7 +5976,7 @@ function ssh-help {
     Add-Cmd "xs"               "SV 해제 (원격 작업 디렉터리 SVDIR도 함께 해제)"
     Add-Cmd "xd"               "DST 해제"
     Add-Cmd "ssh-config [패턴]" "ssh config의 Host 목록 (별칭 하나를 정확히 주면 그 Host의 설정 전체)"
-    Add-Note "추가: ssh-config -a <별칭> <[사용자@]주소[:포트]> [-p 포트] [-i 키] [-From <기존 별칭>]"
+    Add-Note "추가: ssh-config -a <별칭> <[사용자@]주소[:포트]> [-p 포트] [-i 키] [-From <기존 별칭>] - -a만 쓰면 항목마다 물어본다"
     Add-Note "수정: ssh-config -e <별칭> [-n 주소] [-u 사용자] [-p 포트] [-o 키=값] [-x 키] [-Rename 새별칭] - 옵션 없이 쓰면 항목마다 물어본다"
     Add-Note "삭제: ssh-config -d <별칭>... [-y]. 고칠 때마다 config.bak-<시각>으로 백업(최근 5개), 새 Host는 Host * 앞에 넣는다"
     Add-Note "그룹: 주석 3줄(#####/# 이름/#####) 또는 1줄(### 이름 ###)을 그룹 머리로 읽어 목록을 그룹별로 보여준다. ssh-config -g <그룹> 으로 거르기"
@@ -7870,8 +7952,16 @@ Register-WsPaneAgent
 # 실측한 제약: Navigate2의 새 탭 플래그(0x800)는 무시되고, 탭 객체의 Quit()은 탭을 닫지 못한다.
 #             Navigate2는 ::{GUID}를 받지 못해 shell:::{GUID}로 바꿔 넘긴다.
 
-# 세트 저장 파일 (rt-recent.txt·workspaces와 같은 프로필 폴더, 저장소 미반영). 시험할 때는 이 변수를 임시 경로로 돌린다.
-$global:fld_store_file = Join-Path (Split-Path -Parent $PROFILE.CurrentUserCurrentHost) 'fld.json'
+# 세트 저장 파일 - ws 스냅샷과 같은 workspaces 폴더의 fld\ 하위 (저장소 미반영). ws 목록은 workspaces\*.json만 읽어서 섞이지 않는다.
+# 시험할 때는 이 변수를 임시 경로로 돌린다.
+$global:fld_store_file = Join-Path (Split-Path -Parent $PROFILE.CurrentUserCurrentHost) 'workspaces\fld\fld.json'
+# 예전 위치(프로필 폴더 fld.json)에 남은 세트 파일은 처음 한 번 새 위치로 옮긴다 (다른 PC에 프로필을 옮겼을 때 대비)
+$fld_old_store = Join-Path (Split-Path -Parent $PROFILE.CurrentUserCurrentHost) 'fld.json'
+if ((Test-Path -LiteralPath $fld_old_store) -and -not (Test-Path -LiteralPath $global:fld_store_file)) {
+    $null = New-Item -ItemType Directory -Path (Split-Path -Parent $global:fld_store_file) -Force
+    Move-Item -LiteralPath $fld_old_store -Destination $global:fld_store_file
+}
+Remove-Variable fld_old_store
 
 function Read-FldSets {
     # fnc-ignore
@@ -7890,6 +7980,8 @@ function Read-FldSets {
 function Write-FldSets {
     # fnc-ignore
     param($Sets)
+    $dir = Split-Path -Parent $global:fld_store_file
+    if (-not [IO.Directory]::Exists($dir)) { $null = [IO.Directory]::CreateDirectory($dir) }
     ConvertTo-Json -InputObject $Sets -Depth 3 | Set-Content -LiteralPath $global:fld_store_file -Encoding utf8
 }
 
