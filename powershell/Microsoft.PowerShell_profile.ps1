@@ -3462,15 +3462,18 @@ function Invoke-SshConfigArrange {
 function Read-SshConfigAddAnswers {
     # fnc-ignore
     # ssh-config -a 를 인자 없이 썼을 때 항목마다 묻는다. 한 줄 입력과 같은 값(Names·IdentityFile·Group)을 돌려주고, 취소면 $null.
+    # 주소에 사용자@·:포트를 적으면 그 칸은 묻지 않는다. 키 파일·그룹은 목록에서 고른다(Select-TabPickerItem).
     param([string]$ConfigPath)
 
     $esc = [char]27
     $sub = "$esc[38;5;245m"
+    $mainPath = [IO.Path]::GetFullPath((Expand-UserPath $ConfigPath))
     $hosts = @(Get-SshConfigHosts -ConfigPath $ConfigPath)
     $ask = { param([string]$Label) ([string](Read-Host ("  {0}" -f $Label))).Trim() }
     $warn = { param([string]$Text) Write-Host ("    {0}" -f $Text) -ForegroundColor Yellow }
+    $pickHint = '↑↓ 이동 | Enter 선택 | Esc/q 추가 취소'
 
-    Write-Host ("{0}ssh-config:$esc[0m Host 추가  {0}(별칭·주소에서 Enter: 취소 / 나머지 Enter: 넣지 않음, [ ] 안은 Enter로 그대로)$esc[0m" -f $sub)
+    Write-Host ("{0}ssh-config:$esc[0m Host 추가  {0}(별칭·주소에서 Enter = 취소)$esc[0m" -f $sub)
 
     while ($true) {
         $alias = & $ask '별칭'
@@ -3481,50 +3484,92 @@ function Read-SshConfigAddAnswers {
         else { break }
     }
 
-    # 주소 칸에 사용자@·:포트를 같이 적으면 아래 사용자·포트 칸의 기본값이 된다.
+    $portOk = { param([string]$Text) $Text -match '^\d+$' -and [int64]$Text -ge 1 -and [int64]$Text -le 65535 }
+
     while ($true) {
         $addr = & $ask '주소 ([사용자@]주소[:포트])'
         if (-not $addr) { return $null }
         if ($addr -match '^(?:(?<user>[^@\s]+)@)?(?<host>[^@\s:]+)(?::(?<port>\d+))?$') {
             $hostValue = $Matches.host; $userValue = [string]$Matches.user; $portValue = [string]$Matches.port
-            break
+            if (-not $portValue -or (& $portOk $portValue)) { break }
+            & $warn '포트는 1~65535 숫자입니다.'
+            continue
         }
         & $warn '형식: [사용자@]주소[:포트]  예) 10.0.0.5 / root@10.0.0.5 / root@10.0.0.5:2222'
     }
 
-    $askOr = {
-        param([string]$Label, [string]$Current)
-        $answer = & $ask $(if ($Current) { "{0} [{1}]" -f $Label, $Current } else { $Label })
-        if ($answer) { $answer } else { $Current }
+    if (-not $userValue) {
+        while ($true) {
+            $userValue = & $ask '사용자 (Enter: 넣지 않음)'
+            if (-not $userValue -or $userValue -match '^[^@\s:]+$') { break }
+            & $warn '사용자 이름에는 공백·@·:를 쓸 수 없습니다.'
+        }
     }
 
-    # 잘못 넣으면 같은 기본값으로 다시 묻는다.
-    $userDefault = $userValue
-    while ($true) {
-        $userValue = & $askOr '사용자' $userDefault
-        if (-not $userValue -or $userValue -match '^[^@\s:]+$') { break }
-        & $warn '사용자 이름에는 공백·@·:를 쓸 수 없습니다.'
+    if (-not $portValue) {
+        # Enter면 Port 줄을 넣지 않는다. 그때 ssh가 쓸 포트(Host * 등에 없으면 22)를 ssh -G로 알아내 [ ]로 보여준다.
+        $fileArgs = if (Test-SshConfigIsDefault $ConfigPath) { @() } else { @('-F', $mainPath) }
+        $effective = @(& ssh @fileArgs -G $alias 2>$null | Where-Object { $_ -match '^port\s+\d+$' } | Select-Object -First 1)
+        $portDefault = if ($effective) { ($effective[0] -split '\s+')[1] } else { '22' }
+
+        while ($true) {
+            $answer = & $ask ("포트 [{0}]" -f $portDefault)
+            if (-not $answer) { break }
+            if (& $portOk $answer) { $portValue = $answer; break }
+            & $warn '포트는 1~65535 숫자입니다.'
+        }
     }
 
-    $portDefault = $portValue
-    while ($true) {
-        $portValue = & $askOr '포트' $portDefault
-        if (-not $portValue -or ($portValue -match '^\d+$' -and [int64]$portValue -ge 1 -and [int64]$portValue -le 65535)) { break }
-        & $warn '포트는 1~65535 숫자입니다.'
+    # 키 파일: config가 있는 폴더(기본 ~/.ssh)의 파일 중 키가 아닌 것(*.pub·known_hosts·config 등)을 이름으로 거른 목록. 내용은 읽지 않는다.
+    $keyDir = Split-Path -Parent $mainPath
+    $homeFull = [IO.Path]::GetFullPath($HOME).TrimEnd('\')
+    $toConfigPath = {
+        param([string]$Full)
+        if ($Full.StartsWith($homeFull + '\', [StringComparison]::OrdinalIgnoreCase)) { '~/' + $Full.Substring($homeFull.Length + 1).Replace('\', '/') } else { $Full }
     }
+    $skip = '^(known_hosts.*|authorized_keys.*|config.*|environment|.*\.(pub|bak.*|old|txt|log|md))$'
+    $keys = @(if (Test-Path -LiteralPath $keyDir) { Get-ChildItem -LiteralPath $keyDir -File | Where-Object { $_.Name -notmatch $skip } | Sort-Object Name })
+    $keyRows = @('(넣지 않음)') + @($keys | ForEach-Object {
+            "{0}{1}" -f $_.Name, $(if (Test-Path -LiteralPath ($_.FullName + '.pub')) { "  $sub(.pub 있음)" })
+        }) + @('직접 입력...')
 
-    $keyValue = & $ask '키 파일'
+    $keyIndex = Select-TabPickerItem -Header ("Host 추가: {0} - 키 파일 ({1})" -f $alias, (& $toConfigPath $keyDir)) -Rows $keyRows -Hint $pickHint
+    if ($keyIndex -lt 0) { return $null }
+    $keyValue = if ($keyIndex -eq 0) { '' }
+        elseif ($keyIndex -eq $keyRows.Count - 1) { & $ask '키 파일 경로' }
+        else { & $toConfigPath $keys[$keyIndex - 1].FullName }
     if ($keyValue -and -not (Test-Path -LiteralPath (Expand-UserPath $keyValue))) { & $warn '이 PC에 없는 파일입니다 (그대로 넣습니다).' }
+    Write-Host ("  키 파일: {0}" -f $(if ($keyValue) { $keyValue } else { '(넣지 않음)' }))
 
-    # 그룹: 기본 config의 그룹 머리 이름을 보여준다. 없는 이름이면 -g 처럼 새 그룹 머리를 만든다.
-    $mainPath = [IO.Path]::GetFullPath((Expand-UserPath $ConfigPath))
-    $groupNames = @((Get-SshConfigLayout -Doc (Read-SshConfigDoc -Path $mainPath)).Units | Where-Object { $_.Type -eq 'Banner' } | ForEach-Object { $_.Name })
-    $groupLabel = if ($groupNames) { "그룹 (있는 그룹: {0} / 새 이름이면 새 그룹)" -f ($groupNames -join ', ') } else { '그룹 (이름을 주면 그룹 머리를 새로 만든다)' }
-    $groupValue = & $ask $groupLabel
+    # 그룹: 기본 config의 그룹 머리 목록. 새 그룹이면 -g 처럼 그룹 머리를 새로 만든다.
+    $units = @((Get-SshConfigLayout -Doc (Read-SshConfigDoc -Path $mainPath)).Units)
+    $groupNames = @($units | Where-Object { $_.Type -eq 'Banner' } | ForEach-Object { $_.Name })
+    $groupOf = Get-SshConfigGroupOf $units
+    $groupRows = @('(그룹 없음)') + @($groupNames | ForEach-Object {
+            $name = $_
+            "[{0}]  {1}Host {2}개" -f $name, $sub, @($groupOf.Values | Where-Object { $_ -eq $name }).Count
+        }) + @('+ 새 그룹...')
+
+    while ($true) {
+        $groupIndex = Select-TabPickerItem -Header ("Host 추가: {0} - 그룹" -f $alias) -Rows $groupRows -Hint $pickHint
+        if ($groupIndex -lt 0) { return $null }
+        if ($groupIndex -eq 0) { $groupValue = ''; break }
+        if ($groupIndex -le $groupNames.Count) { $groupValue = $groupNames[$groupIndex - 1]; break }
+
+        $groupValue = & $ask '새 그룹 이름 (Enter: 목록으로)'
+        if (-not $groupValue) { continue }
+        # 추가는 그룹 이름을 일부만 맞아도 찾으므로, 기존 그룹 이름에 들어 있는 이름이면 그 그룹으로 들어간다 - 막는다.
+        $same = @($groupNames | Where-Object { $_ -ieq $groupValue })
+        if ($same) { $groupValue = $same[0]; break }
+        $overlap = @($groupNames | Where-Object { $_ -like "*$groupValue*" })
+        if (-not $overlap) { break }
+        & $warn ("기존 그룹 [{0}]의 이름 일부라 그 그룹에 들어갑니다. 다른 이름을 쓰세요." -f ($overlap -join '], ['))
+    }
+    Write-Host ("  그룹: {0}" -f $(if ($groupValue) { "[$groupValue]" + $(if ($groupNames -notcontains $groupValue) { ' (새 그룹)' }) } else { '(그룹 없음)' }))
 
     $addrText = "{0}{1}{2}" -f $(if ($userValue) { "$userValue@" }), $hostValue, $(if ($portValue) { ":$portValue" })
-    $summary = "{0} → {1}{2}{3}" -f $alias, $addrText, $(if ($keyValue) { "  키: $keyValue" }), $(if ($groupValue) { "  그룹: $groupValue" })
-    if ((Read-Host ("  추가할까요? {0} (Y/n)" -f $summary)) -match '^\s*(n|no)\s*$') { return $null }
+    Write-Host ("  {0}→$esc[0m Host {1}  {2}" -f $sub, $alias, $addrText)
+    if ((Read-Host '  추가할까요? (Y/n)') -match '^\s*(n|no)\s*$') { return $null }
 
     [pscustomobject]@{ Names = @($alias, $addrText); IdentityFile = $keyValue; Group = $groupValue }
 }
@@ -3567,7 +3612,7 @@ function ssh-config {
             @('ssh-config [패턴]', 'Host 목록 - 그룹별 (별칭 하나를 정확히 주면 그 Host의 설정 전체)'),
             @('ssh-config -g <그룹>', '그 그룹의 Host만'),
             @('ssh-config -a <별칭> <[사용자@]주소[:포트]>', 'Host 추가 (옵션으로 사용자·포트·키 등 지정)'),
-            @('ssh-config -a', 'Host 추가 - 별칭·주소·사용자·포트·키·그룹을 차례로 묻는다'),
+            @('ssh-config -a', 'Host 추가 - 별칭·주소(·사용자·포트)를 묻고 키 파일·그룹은 목록에서 고른다'),
             @('ssh-config -e <별칭> [옵션]', 'Host 수정 (옵션 없이 쓰면 항목마다 물어본다)'),
             @('ssh-config -d <별칭>... [-y]', 'Host 삭제 (확인 후, 여러 개는 공백·쉼표로)'),
             @('ssh-config -m', '순서·그룹 정리 화면 - 커서로 Host·그룹을 옮긴다')
