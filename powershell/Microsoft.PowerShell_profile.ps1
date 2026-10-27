@@ -6082,6 +6082,7 @@ function ssh-help {
     Add-Note "저장은 새 탭에서 실행한다 - 그 탭은 스냅샷에서 빠진다. 탭 순서·분할 모양·분할 비율까지 복원된다"
     Add-Note "각 pane은 프로필을 읽을 때 감시기를 건다 - 프로필을 바꾼 뒤 기존 pane은 . $PROFILE 을 한 번 실행해야 저장 대상이 된다"
     Add-Note "명령 실행 중인 pane은 상태를 답할 수 없어 어느 pane인지 알려준다 (Ctrl+C로 멈춘 뒤 다시 저장, -f면 구조만 저장)"
+    Add-Note "마지막 명령이 c(접속)인 pane이 있으면 저장 끝에 전부 다시 접속할지 묻는다 (Y면 ws load 때 그 pane들만 c 실행, n이면 체크 목록에서 골라 저장, -y면 묻지 않고 Y)"
     Add-Note "복원하면 SV/DST/SVDIR·작업 경로·제목·탭 색이 돌아오고, 실행 중이던 명령은 히스토리에 들어간다(위 화살표)"
     Add-Cmd "fld"              "여러 폴더를 탐색기 한 창의 탭으로 열고, 탭 묶음을 세트로 저장해 다시 연다"
     Add-Note "fld (현재 폴더 열기) / fld <세트|경로>... / fld -l [세트] (목록·내용) / fld -s <세트> [-Force] / fld -a <세트> [경로...]"
@@ -7420,6 +7421,34 @@ function Save-WsSnapshot {
         }
     }
 
+    # 마지막 명령이 c(인자 없는 접속)인 pane은 복원할 때 다시 접속할지 한 번 묻는다. 다른 명령은 다시 실행하지 않는다.
+    # (접속 중인 pane은 답하지 못하므로 ssh를 끊고 저장한다 - 그러면 마지막 명령이 c로 남는다)
+    # 먼저 전부 할지 묻고, n이면 체크 목록에서 pane을 골라 그대로 저장한다.
+    $connectPanes = @(for ($t = 0; $t -lt $tabs.Count; $t++) {
+            Get-WsLeafPanes -Node $tabs[$t].Layout | Where-Object { $_.SV -and ([string]$_.Last).Trim() -match '^(c|ssh-con)$' } |
+                ForEach-Object { [pscustomobject]@{ Tab = $t + 1; Pane = $_ } }
+        })
+
+    if ($connectPanes.Count -gt 0) {
+        $labels = @($connectPanes | ForEach-Object { "탭[{0}] {1}  SV={2}" -f $_.Tab, $(if ($_.Pane.Title) { $_.Pane.Title } else { 'pwsh' }), $_.Pane.SV })
+
+        Write-Host ""
+        Write-Host ("마지막 명령이 c(접속)인 pane {0}개" -f $connectPanes.Count) -ForegroundColor Cyan
+        foreach ($label in $labels) { Write-Host ("  {0}" -f $label) }
+
+        $answer = if ($Yes) { 'y' } else { Read-Host "복원할 때 전부 c로 다시 접속할까요? (Y/n - n이면 골라서)" }
+        $chosen = if ($answer -notmatch '^\s*(n|no)\s*$') { @(0..($connectPanes.Count - 1)) }
+            else {
+                $picked = Select-WsCheckList -Header '복원할 때 c로 다시 접속할 pane' -Rows $labels
+                if ($null -eq $picked) { Write-Host "  선택을 취소했습니다 - 자동 접속 없이 저장합니다." -ForegroundColor Yellow; @() } else { @($picked) }
+            }
+
+        for ($i = 0; $i -lt $connectPanes.Count; $i++) {
+            Add-Member -InputObject $connectPanes[$i].Pane -NotePropertyName AutoConnect -NotePropertyValue ($chosen -contains $i) -Force
+        }
+        Write-Host ("  자동 접속: {0}개 / {1}개" -f $chosen.Count, $connectPanes.Count) -ForegroundColor DarkCyan
+    }
+
     $snapshot = [pscustomobject]@{
         Version = 1
         Name    = $Name
@@ -7432,6 +7461,52 @@ function Save-WsSnapshot {
     $snapshot | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $file -Encoding utf8
     Write-Host ("저장 완료: {0}  (탭 {1} / pane {2})" -f $file, $tabs.Count, $paneCount) -ForegroundColor Green
     Show-WsSnapshot -Name $Name
+}
+
+function Select-WsCheckList {
+    # fnc-ignore
+    # 체크박스 목록 (ws save 자동 접속 고르기). ↑↓ 이동, Space 체크, a 전체 선택/해제, Enter 확정 → 고른 번호들, Esc/q → $null.
+    param([string]$Header, [string[]]$Rows, [string]$Hint = '↑↓ 이동 | Space 체크 | a 전체 | Enter 확정 | Esc/q 취소')
+
+    $esc = [char]27
+    $pos = 0
+    $checked = [bool[]]::new($Rows.Count)
+
+    [Console]::Write("$esc[?1049h$esc[?25l")
+
+    try {
+        while ($true) {
+            $sb = [System.Text.StringBuilder]::new()
+            [void]$sb.Append("$esc[H$esc[2J")
+            [void]$sb.Append("$esc[93m$Header$esc[0m`n")
+            [void]$sb.Append("$esc[38;5;250m  $Hint$esc[0m`n`n")
+
+            for ($i = 0; $i -lt $Rows.Count; $i++) {
+                $cursor = if ($i -eq $pos) { "$esc[92m>$esc[0m" } else { ' ' }
+                $box = if ($checked[$i]) { "$esc[92m[x]$esc[0m" } else { '[ ]' }
+                [void]$sb.Append((" {0} {1} {2}$esc[0m`n" -f $cursor, $box, $Rows[$i]))
+            }
+
+            [void]$sb.Append(("`n$esc[38;5;250m  선택 {0} / {1}$esc[0m`n" -f @($checked | Where-Object { $_ }).Count, $Rows.Count))
+            [Console]::Write($sb.ToString())
+
+            switch (Read-SshPickerKey) {
+                'UpArrow'   { $pos = ($pos - 1 + $Rows.Count) % $Rows.Count }
+                'DownArrow' { $pos = ($pos + 1) % $Rows.Count }
+                'Spacebar'  { $checked[$pos] = -not $checked[$pos] }
+                'A' {
+                    $all = $checked -notcontains $false
+                    for ($i = 0; $i -lt $checked.Count; $i++) { $checked[$i] = -not $all }
+                }
+                'Enter'  { return , @(for ($i = 0; $i -lt $checked.Count; $i++) { if ($checked[$i]) { $i } }) }
+                'Escape' { return $null }
+                'Q'      { return $null }
+            }
+        }
+    }
+    finally {
+        [Console]::Write("$esc[?1049l$esc[?25h")
+    }
 }
 
 function Show-WsTree {
@@ -7459,6 +7534,10 @@ function Show-WsTree {
 
         if ($pane.Last) {
             Write-Host ("{0}  {1}마지막 명령: {2}{3}" -f $pad, $dim, $pane.Last, $reset)
+        }
+
+        if ($pane.AutoConnect -eq $true -and $pane.SV) {
+            Write-Host ("{0}  {1}복원 후 자동 접속: c ({2}){3}" -f $pad, $dim, $pane.SV, $reset)
         }
 
         return
@@ -7558,6 +7637,9 @@ function New-WsPaneInitScript {
     $text = if ($Message) { $Message } else { "ws: 작업공간 [{0}] 복원" -f $Snapshot }
     $lines.Add(("Write-Host '{0}' -ForegroundColor DarkCyan" -f ($text -replace "'", "''")))
     $lines.Add('Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue')
+
+    # ws save 때 자동 접속하기로 한 pane은 변수를 맞춘 뒤 c로 접속한다 (끊으면 그 pane의 셸로 돌아온다).
+    if ($Pane.AutoConnect -eq $true -and $Pane.SV) { $lines.Add('ssh-con') }
 
     $path = Join-Path ([IO.Path]::GetTempPath()) ("ws_{0}.ps1" -f [guid]::NewGuid().ToString('N'))
     Set-Content -LiteralPath $path -Value $lines -Encoding utf8BOM
