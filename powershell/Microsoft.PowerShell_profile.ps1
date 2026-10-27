@@ -6156,6 +6156,7 @@ function ssh-help {
     Add-Note "명령 실행 중인 pane은 상태를 답할 수 없어 어느 pane인지 알려준다 (Ctrl+C로 멈춘 뒤 다시 저장, -f면 구조만 저장)"
     Add-Note "마지막 명령이 c(접속)인 pane이 있으면 저장 끝에 전부 다시 접속할지 묻는다 (Y면 ws load 때 그 pane들만 c 실행, n이면 체크 목록에서 골라 저장, -y면 묻지 않고 Y)"
     Add-Note "복원하면 SV/DST/SVDIR·작업 경로·제목·탭 색이 돌아오고, 실행 중이던 명령은 히스토리에 들어간다(위 화살표)"
+    Add-Note "불러온 pane은 프롬프트 윗줄 win11 배지 옆에 작업공간 이름 배지가 붙는다 (dup·dup -t로 늘린 pane도 이어받는다)"
     Add-Cmd "fld"              "여러 폴더를 탐색기 한 창의 탭으로 열고, 탭 묶음을 세트로 저장해 다시 연다"
     Add-Note "fld (현재 폴더 열기) / fld <세트|경로>... / fld -l [세트] (목록·내용) / fld -s <세트> [-Force] / fld -a <세트> [경로...]"
     Add-Note "fld -rm <세트> <경로|번호>... / fld -del <세트> / 사용법은 fld -h"
@@ -6321,7 +6322,7 @@ function dup # 현재 세션($SV, 작업 경로)을 복제해 화면 분할 (-r 
             $lines.Add(("`$global:{0} = {1}" -f $name, [int]$port.Value))
         }
     }
-    foreach ($name in 'OMP_SV', 'OMP_SVID', 'OMP_SVIP', 'OMP_SVPORT', 'OMP_SVDIR', 'OMP_DST', 'OMP_DSTID', 'OMP_DSTIP', 'OMP_DSTPORT', 'OMP_TITLE', 'OMP_TITLE_AUTO', 'OMP_TABCOLOR') {
+    foreach ($name in 'OMP_SV', 'OMP_SVID', 'OMP_SVIP', 'OMP_SVPORT', 'OMP_SVDIR', 'OMP_DST', 'OMP_DSTID', 'OMP_DSTIP', 'OMP_DSTPORT', 'OMP_TITLE', 'OMP_TITLE_AUTO', 'OMP_TABCOLOR', 'OMP_WS') {
         $value = [Environment]::GetEnvironmentVariable($name)
         if ($value) {
             $lines.Add(("`$env:{0} = '{1}'" -f $name, ($value -replace "'", "''")))
@@ -7703,6 +7704,10 @@ function New-WsPaneInitScript {
         $lines.Add('Write-TabColorSequence $env:OMP_TABCOLOR')
     }
     else { $lines.Add('Remove-Item Env:OMP_TABCOLOR -ErrorAction SilentlyContinue') }
+
+    # 불러온 작업공간 이름은 프롬프트 윗줄 배지(OMP_WS)로 보여준다.
+    # dup -t는 스냅샷 이름이 없으므로 물려받은 값을 그대로 둔다 (wt로 연 탭은 실행한 pane의 환경변수를 물려받는다).
+    if ($Snapshot) { $lines.Add(("`$env:OMP_WS = '{0}'" -f ($Snapshot -replace "'", "''"))) }
 
     # 실행 중이던 명령은 스냅샷(ws show)에만 남긴다. 새 세션의 히스토리에 밀어 넣는 방법은
     # 프로필이 올라오기 전이라 동작하지 않아서 안내도 하지 않는다.

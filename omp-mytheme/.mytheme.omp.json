@@ -42,6 +42,13 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
+          "template": "{{ if .Env.OMP_WS }} <#FFFFFF,#2D6A4F> 󰕮 {{ .Env.OMP_WS }} </>{{ end }}"
+        },
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#FFFFFF",
+          "background": "transparent",
           "template": "{{ if .Root }} <#FFFFFF,#FF2740> 󰒘 admin </>{{ end }}"
         },
         {
