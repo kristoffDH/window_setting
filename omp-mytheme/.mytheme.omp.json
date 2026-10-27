@@ -42,6 +42,13 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
+          "template": "{{ if .Root }} <#FFFFFF,#FF2740> 󰒘 admin </>{{ end }}"
+        },
+        {
+          "type": "text",
+          "style": "plain",
+          "foreground": "#FFFFFF",
+          "background": "transparent",
           "template": "{{ if .Env.OMP_TAG }} <#D19BFF>󰍹 </>{{ trimPrefix \"IP : \" .Env.OMP_TAG }}{{ end }}"
         },
         {
@@ -66,7 +73,7 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": "{{ $sv := .Env.OMP_SV }}{{ $svid := .Env.OMP_SVID }}{{ $svip := .Env.OMP_SVIP }}{{ $svport := .Env.OMP_SVPORT }}{{ $svdir := .Env.OMP_SVDIR }}{{ if $sv }} <#2EC4B6>󰒋</> <#FFFFFF>SV  : {{ $sv }}{{ if $svid }} <#5C6370>|</> <#2EC4B6>󰀄 </>ID : {{ $svid }}{{ end }}{{ if $svip }} <#5C6370>|</> <#2EC4B6>󰇧 </>IP : {{ $svip }}{{ end }}{{ if $svport }} <#5C6370>|</> <#2EC4B6>󰚥 </>PORT : {{ $svport }}{{ end }}{{ if $svdir }} <#5C6370>|</> <#2EC4B6>󰉋 </>DIR : {{ $svdir }}{{ end }}</> {{ end }}"
+          "template": "{{ $sv := .Env.OMP_SV }}{{ $svid := .Env.OMP_SVID }}{{ $svip := .Env.OMP_SVIP }}{{ $svport := .Env.OMP_SVPORT }}{{ $svdir := .Env.OMP_SVDIR }}{{ if $sv }} <#2EC4B6>󰒋</> <#FFFFFF>SV  : {{ $sv }}{{ if $svid }} <#5C6370>|</> <#2EC4B6>󰀄 </>ID : {{ $svid }}{{ end }}{{ if $svip }} <#5C6370>|</> <#2EC4B6>󰇧 </>IP : {{ $svip }}{{ end }}{{ if $svport }} <#5C6370>|</> <#2EC4B6>󰚥 </>PORT : {{ $svport }}{{ end }}{{ if $svdir }} <#5C6370>|</> <#2EC4B6>󰉋 </>DIR : {{ $svdir }}{{ end }}{{ if .Env.OMP_SVSTATE }} <#5C6370>|</> <#2EC4B6>󰐰 </>STAT : {{ if eq .Env.OMP_SVSTATE \"up\" }}<#90BE6D>󰗠</>{{ else if eq .Env.OMP_SVSTATE \"down\" }}<#FF2740>󰅙</>{{ else }}<#8D99AE>󰦖</>{{ end }}{{ end }}</> {{ end }}"
         }
       ]
     },    
@@ -80,7 +87,7 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": "{{ $dst := .Env.OMP_DST }}{{ $dstid := .Env.OMP_DSTID }}{{ $dstip := .Env.OMP_DSTIP }}{{ $dstport := .Env.OMP_DSTPORT }}{{ if $dst }} <#E76F51>󰒊</> <#FFFFFF>DST : {{ $dst }}{{ if $dstid }} <#5C6370>|</> <#E76F51>󰀄 </>ID : {{ $dstid }}{{ end }}{{ if $dstip }} <#5C6370>|</> <#E76F51>󰇧 </>IP : {{ $dstip }}{{ end }}{{ if $dstport }} <#5C6370>|</> <#E76F51>󰚥 </>PORT : {{ $dstport }}{{ end }}</> {{ end }}"
+          "template": "{{ $dst := .Env.OMP_DST }}{{ $dstid := .Env.OMP_DSTID }}{{ $dstip := .Env.OMP_DSTIP }}{{ $dstport := .Env.OMP_DSTPORT }}{{ if $dst }} <#E76F51>󰒊</> <#FFFFFF>DST : {{ $dst }}{{ if $dstid }} <#5C6370>|</> <#E76F51>󰀄 </>ID : {{ $dstid }}{{ end }}{{ if $dstip }} <#5C6370>|</> <#E76F51>󰇧 </>IP : {{ $dstip }}{{ end }}{{ if $dstport }} <#5C6370>|</> <#E76F51>󰚥 </>PORT : {{ $dstport }}{{ end }}{{ if .Env.OMP_DSTSTATE }} <#5C6370>|</> <#E76F51>󰐰 </>STAT : {{ if eq .Env.OMP_DSTSTATE \"up\" }}<#90BE6D>󰗠</>{{ else if eq .Env.OMP_DSTSTATE \"down\" }}<#FF2740>󰅙</>{{ else }}<#8D99AE>󰦖</>{{ end }}{{ end }}</> {{ end }}"
         }
       ]
     },
@@ -105,7 +112,7 @@
           "style": "plain",
           "foreground": "#FFFFFF",
           "background": "transparent",
-          "template": " on <#8D99AE></> <#FFFFFF>{{ .HEAD }}</>{{ if or (or (gt .Ahead 0) (gt .Behind 0)) (or (gt (add .Working.Added .Staging.Added) 0) (or (gt (add .Working.Modified .Staging.Modified) 0) (or (gt (add .Working.Deleted .Staging.Deleted) 0) (or (gt .Working.Untracked 0) (gt .StashCount 0))))) }} <#FFFFFF>(</> {{ if or (gt .Ahead 0) (gt .Behind 0) }}{{ if gt .Ahead 0 }}<#90BE6D>↑{{ .Ahead }}</> {{ end }}{{ if gt .Behind 0 }}<#FF2740>↓{{ .Behind }}</> {{ end }}{{ end }}{{ if gt (add .Working.Added .Staging.Added) 0 }}<#90BE6D> {{ add .Working.Added .Staging.Added }}</> {{ end }}{{ if gt (add .Working.Modified .Staging.Modified) 0 }}<#E9C46A> {{ add .Working.Modified .Staging.Modified }}</> {{ end }}{{ if gt (add .Working.Deleted .Staging.Deleted) 0 }}<#FF2740> {{ add .Working.Deleted .Staging.Deleted }}</> {{ end }}{{ if gt .Working.Untracked 0 }}<#8D99AE> {{ .Working.Untracked }}</> {{ end }}{{ if gt .StashCount 0 }}stash: {{ .StashCount }} {{ end }}<#FFFFFF>)</>{{ end }} ",
+          "template": " on <#8D99AE></> <#FFFFFF>{{ .HEAD }}</>{{ if not .Detached }} <#8D99AE> </><#FFFFFF>{{ .Commit.Sha | trunc 8 }}</>{{ end }}{{ if or (or (gt .Ahead 0) (gt .Behind 0)) (or (gt (add .Working.Added .Staging.Added) 0) (or (gt (add .Working.Modified .Staging.Modified) 0) (or (gt (add .Working.Deleted .Staging.Deleted) 0) (or (gt .Working.Untracked 0) (gt .StashCount 0))))) }} <#FFFFFF>(</> {{ if or (gt .Ahead 0) (gt .Behind 0) }}{{ if gt .Ahead 0 }}<#90BE6D>↑{{ .Ahead }}</> {{ end }}{{ if gt .Behind 0 }}<#FF2740>↓{{ .Behind }}</> {{ end }}{{ end }}{{ if gt (add .Working.Added .Staging.Added) 0 }}<#90BE6D> {{ add .Working.Added .Staging.Added }}</> {{ end }}{{ if gt (add .Working.Modified .Staging.Modified) 0 }}<#E9C46A> {{ add .Working.Modified .Staging.Modified }}</> {{ end }}{{ if gt (add .Working.Deleted .Staging.Deleted) 0 }}<#FF2740> {{ add .Working.Deleted .Staging.Deleted }}</> {{ end }}{{ if gt .Working.Untracked 0 }}<#8D99AE> {{ .Working.Untracked }}</> {{ end }}{{ if gt .StashCount 0 }}stash: {{ .StashCount }} {{ end }}<#FFFFFF>)</>{{ end }} ",
           "properties": {
             "fetch_status": true,
             "display_status": true,

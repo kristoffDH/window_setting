@@ -212,6 +212,78 @@ function Update-OmpTag {
 
 Update-OmpTag
 
+# SV·DST 연결 상태 표시: 프롬프트가 기다리지 않도록 확인은 별도 runspace에서 하고, 프롬프트는 마지막 결과만 읽는다.
+# ssh 포트 대신 ICMP ping을 쓴다 - 포트로 접속을 시도하면 서버 sshd 로그에 기록이 남기 때문.
+# Targets는 배열을 통째로 바꿔 끼우고(부분 수정 없음), Results는 대상 IP별 결과라 대상과 결과가 어긋나 읽히지 않는다.
+$global:SvProbe = [hashtable]::Synchronized(@{ Targets = @(); Results = [hashtable]::Synchronized(@{}); Started = $false })
+
+function Start-SvProbe {
+    # fnc-ignore
+    # SV·DST 연결 확인 runspace를 한 번만 띄운다. 대상이 없으면 쉬고, 있으면 5초 간격으로 대상 전부를 동시에 ping 한다.
+    if ($global:SvProbe.Started) { return }
+    $global:SvProbe.Started = $true
+
+    $ps = [powershell]::Create()
+    $null = $ps.AddScript({
+        param($state)
+        while ($true) {
+            $targets = @($state.Targets)
+            if ($targets.Count -eq 0) { Start-Sleep -Milliseconds 500; continue }
+            $key = $targets -join ','
+
+            # 동기 Send는 창을 닫을 때 끊기지 않아 종료가 최대 1초 늦어진다(실측) → 비동기로 보내고 짧게 나눠 기다린다.
+            # 대상마다 Ping 객체를 따로 써야 동시에 보낼 수 있다(한 객체로는 겹쳐 보내지 못함).
+            $jobs = foreach ($target in $targets) {
+                $task = $null
+                try { $task = [System.Net.NetworkInformation.Ping]::new().SendPingAsync($target, 1000) } catch {}
+                [pscustomobject]@{ Target = $target; Task = $task }
+            }
+            while (@($jobs | Where-Object { $_.Task -and -not $_.Task.IsCompleted }).Count -gt 0) { Start-Sleep -Milliseconds 50 }
+
+            foreach ($job in $jobs) {
+                $result = 'down'
+                if ($job.Task -and $job.Task.Status -eq 'RanToCompletion' -and $job.Task.Result.Status -eq 'Success') { $result = 'up' }
+                $state.Results[$job.Target] = $result
+            }
+            # 더 이상 보지 않는 대상의 결과는 지운다 - 나중에 같은 IP를 다시 고르면 옛 결과 대신 확인 전으로 보이게.
+            foreach ($old in @($state.Results.Keys)) { if ($targets -notcontains $old) { $state.Results.Remove($old) } }
+
+            # 다음 확인까지 기다리되, 그 사이 SV·DST가 바뀌면 바로 다시 확인한다.
+            for ($i = 0; $i -lt 20 -and (@($state.Targets) -join ',') -eq $key; $i++) { Start-Sleep -Milliseconds 250 }
+        }
+    }).AddArgument($global:SvProbe)
+    $null = $ps.BeginInvoke()
+}
+
+function Set-SvPromptState {
+    # fnc-ignore
+    # oh-my-posh가 프롬프트를 그리기 직전에 부른다. SV·DST 연결 상태(OMP_SVSTATE / OMP_DSTSTATE = up/down/wait)를 마지막 확인 결과로 맞춘다(대기 없음).
+    param([bool]$originalStatus)
+
+    $sv = [string]$env:OMP_SVIP
+    $dst = [string]$env:OMP_DSTIP
+
+    # 같은 IP면 한 번만 확인한다. 바뀌었을 때만 배열을 새로 끼운다.
+    $targets = @()
+    if ($sv) { $targets += $sv }
+    if ($dst -and $dst -ne $sv) { $targets += $dst }
+    if (($targets -join ',') -ne (@($global:SvProbe.Targets) -join ',')) { $global:SvProbe.Targets = $targets }
+    if ($targets.Count -gt 0) { Start-SvProbe }
+
+    foreach ($pair in @(@('OMP_SVSTATE', $sv), @('OMP_DSTSTATE', $dst))) {
+        if (-not $pair[1]) {
+            Remove-Item "Env:$($pair[0])" -ErrorAction SilentlyContinue
+            continue
+        }
+        $result = $global:SvProbe.Results[$pair[1]]
+        Set-Item "Env:$($pair[0])" $(if ($result) { $result } else { 'wait' })
+    }
+}
+
+# omp는 모듈 안에서 자기 Set-PoshContext(빈 함수)를 먼저 찾으므로, 같은 이름의 함수로는 덮이지 않는다(실측).
+# alias는 함수보다 먼저 해석되므로 omp 문서대로 전역 alias로 연결한다.
+New-Alias -Name Set-PoshContext -Value Set-SvPromptState -Scope Global -Force
+
 function reload
 {
     # OMP_TAG를 갱신하고 oh-my-posh 테마를 다시 읽어 프롬프트를 새로고침한다. (프로필 변경은 새 창에서 반영)
