@@ -1626,7 +1626,7 @@ Register-ArgumentCompleter -CommandName sb -ParameterName Dest -ScriptBlock $ssh
 Remove-Variable -Name sshHostAliasCompleter
 
 function ssh-con {
-    # 선택된 $SV 서버에 ssh로 접속한다. (alias: c)
+    # 선택된 $SV 서버에 ssh로 접속한다. 인자 없으면 원격 TMOUT 해제, 인자는 ssh에 그대로 전달. (alias: c)
     param(
         [Parameter(ValueFromRemainingArguments = $true)]
         [string[]]$Args
@@ -1664,6 +1664,14 @@ function ssh-con {
             Write-Host "먼저 set-sshhost를 다시 실행해 주세요." -ForegroundColor Yellow
             return
         }
+    }
+
+    # 인자 없이 접속하면 원격 로그인 셸에서 TMOUT을 풀고 대화형 셸을 연다 (~/.ssh/config의 RemoteCommand 대신).
+    # config에 RemoteCommand가 남아 있으면 명령과 함께 쓸 수 없다는 오류가 나므로 무효화한다. 인자를 주면 예전처럼 그대로 넘긴다.
+    if (-not $Args) {
+        Write-Host ("connecting: ssh {0}  (TMOUT 해제)" -f $global:SV) -ForegroundColor Green
+        & ssh -t -o RemoteCommand=none $global:SV 'exec $SHELL -lic ''unset TMOUT; exec $SHELL -i'''
+        return
     }
 
     Write-Host ("connecting: ssh {0}" -f $global:SV) -ForegroundColor Green
@@ -6036,7 +6044,7 @@ function ssh-help {
 
     # ── 2. 접속 ──────────────────────────────────────────────────
     Add-Title "[ 2. 접속 / 세션 ]"
-    Add-Cmd "c"                "선택된 SV로 ssh 접속 (= ssh-con, 시스템 ssh 사용)"
+    Add-Cmd "c"                "선택된 SV로 ssh 접속 (= ssh-con, 시스템 ssh 사용) - 원격 TMOUT을 풀고 연다, c <명령·옵션>은 그대로 전달"
     Add-Note "뒤에 붙인 인자는 그대로 ssh로 전달된다 (예: c -L 8080:localhost:80)"
     Add-Cmd "auth [대상] [포트]" "공개키를 등록해 비밀번호 없이 접속하게 만든다"
     Add-Note "인자 없이 auth = 선택된 SV 대상. 사용법은 auth -h"
